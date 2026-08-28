@@ -291,7 +291,7 @@ def login():
         if os.path.exists(LOGO_FILE):
             with open(LOGO_FILE, "rb") as img_file:
                 b64_logo = base64.b64encode(img_file.read()).decode()
-            st.markdown(f"""<div style="display: flex; align-items: center; justify-content: center; gap: 15px; margin-bottom: 25px; margin-top: 50px;"><img src="data:image/png;base64,{b64_logo}" width="65"><h1 style="margin: 0; font-size: 32px; color: #111827;">KJL FeedOps</h1></div>""", unsafe_allow_html=True)
+            st.markdown(f"""<div style="display: flex; align-items: center; justify-content: center; gap: 15px; margin-bottom: 25px; margin-top: 50px;"><img src="data:image/png;base64,{b64_logo}" width="65"><h1 style="margin: 0; font-size: 32px; color: #111827;">KJL Poultries Pvt Ltd</h1></div>""", unsafe_allow_html=True)
         else:
             st.markdown("<h1 style='text-align: center; margin-bottom: 25px; margin-top: 50px; color: #111827;'>KJL Poultries Pvt Ltd</h1>", unsafe_allow_html=True)
         with st.form("login"):
@@ -310,7 +310,7 @@ def dashboard():
     if os.path.exists(LOGO_FILE):
         with open(LOGO_FILE, "rb") as img_file:
             b64_logo = base64.b64encode(img_file.read()).decode()
-        st.sidebar.markdown(f"""<div style="display: flex; align-items: center; gap: 12px; margin-bottom: 20px; margin-top: 10px;"><img src="data:image/png;base64,{b64_logo}" width="45"><h1 style="margin: 0; font-size: 22px; color: #1B5E20 !important;">KJL FeedOps</h1></div>""", unsafe_allow_html=True)
+        st.sidebar.markdown(f"""<div style="display: flex; align-items: center; gap: 12px; margin-bottom: 20px; margin-top: 10px;"><img src="data:image/png;base64,{b64_logo}" width="45"><h1 style="margin: 0; font-size: 22px; color: #1B5E20 !important;">KJL Poultries Pvt Ltd</h1></div>""", unsafe_allow_html=True)
     else:
         st.sidebar.markdown(f"<h1>KJL Poultries Pvt Ltd</h1>", unsafe_allow_html=True)
         

@@ -96,6 +96,25 @@ if "db_synced" not in st.session_state:
     st.session_state["production"] = fetch_table("production")
     st.session_state["dispatches"] = fetch_table("dispatches")
     st.session_state["adjustments"] = fetch_table("adjustments")
+    
+    # Fetching live master data
+    mats_db = fetch_table("materials")
+    st.session_state["materials"] = [m["Name"] for m in mats_db] if mats_db else []
+    st.session_state["material_costs"] = {m["Name"]: float(m["Cost"]) for m in mats_db} if mats_db else {}
+    
+    vendors_db = fetch_table("vendors")
+    st.session_state["vendors"] = [v["Name"] for v in vendors_db] if vendors_db else []
+    
+    loc_db = fetch_table("locations")
+    st.session_state["locations"] = [l["Name"] for l in loc_db] if loc_db else []
+    
+    feeds_db = fetch_table("feed_names")
+    st.session_state["feed_names"] = [f["Name"] for f in feeds_db] if feeds_db else []
+    
+    bom_db = fetch_table("bom")
+    st.session_state["bom"] = {b["Formula_Name"]: b["Recipe"] for b in bom_db} if bom_db else {}
+    
+    if "formula_reset_key" not in st.session_state: st.session_state["formula_reset_key"] = 1
     st.session_state["db_synced"] = True
 
 if "users" not in st.session_state:
@@ -104,17 +123,6 @@ if "users" not in st.session_state:
         "sec": {"password": "123", "role": "Security", "name": "Gate Guard", "emp_id": "KJL-002"},
         "lab": {"password": "123", "role": "QC_Lab", "name": "Lab Tech", "emp_id": "KJL-003"},
         "wb": {"password": "123", "role": "Weighbridge", "name": "Scale Operator", "emp_id": "KJL-004"}
-    }
-
-if "materials" not in st.session_state: st.session_state["materials"] = ["MAIZE", "SOYA DOC", "SOYA OIL", "STARTER PREMIX", "MEDICINE"]
-if "material_costs" not in st.session_state: st.session_state["material_costs"] = {"MAIZE": 25.05, "SOYA DOC": 64.02, "SOYA OIL": 143.41, "STARTER PREMIX": 103.83, "MEDICINE": 420.63}
-if "vendors" not in st.session_state: st.session_state["vendors"] = ["AgriCorp", "Farmers Union", "Local Supplier"]
-if "locations" not in st.session_state: st.session_state["locations"] = ["KJL Feedmill", "Farm Line 1", "Farm Line 2", "External Customer"]
-if "feed_names" not in st.session_state: st.session_state["feed_names"] = ["Starter Feed", "Finisher Feed", "Breeder Feed"]
-if "bom" not in st.session_state:
-    st.session_state["bom"] = {
-        "BSM FEED 20-12-2025": {"MAIZE": 0.5978, "SOYA DOC": 0.3350, "SOYA OIL": 0.0270, "STARTER PREMIX": 0.0359, "MEDICINE": 0.0043},
-        "BFM FEED 20-12-2025": {"MAIZE": 0.6500, "SOYA DOC": 0.3000, "MEDICINE": 0.0500}
     }
 
 LOGO_FILE = "Logo png.png"
@@ -172,7 +180,7 @@ def format_status(status_text):
     else: return f"<span>{status_text}</span>"
 
 # =====================================================================
-# DRILL-DOWN POP-UP DIALOGS
+# DRILL-DOWN POP-UP DIALOGS (OMITTED EXTRA CODE FOR BREVITY - KEEPING SAME AS BEFORE)
 # =====================================================================
 @st.dialog("📥 Daily Inbound Details", width="large")
 def view_daily_inbound_dialog(date_str):
@@ -210,7 +218,6 @@ def view_daily_dispatch_dialog(date_str):
 def edit_production_dialog(invoice_id):
     curr_rec = next((item for item in st.session_state["production"] if item["Invoice"] == invoice_id), None)
     if not curr_rec: return
-        
     c1, c2 = st.columns(2)
     new_out_qty = c1.number_input("Final Output Qty (kg)", value=float(curr_rec.get("Out_Qty_kg", 0)))
     new_bags = c2.number_input("Total Bags Packed", value=int(curr_rec.get("Bags", 0)))
@@ -231,51 +238,38 @@ def edit_production_dialog(invoice_id):
         plant_expenses = c_lab + c_pac + c_ele + c_tra + c_bag + c_oth + c_jay
         grand_total = float(curr_rec.get("RM_Cost", 0)) + plant_expenses
         price_per_kg = grand_total / new_out_qty if new_out_qty > 0 else 0
-        
-        update_payload = {
-            "Out_Qty_kg": new_out_qty, "Bags": new_bags, "Cost_Lab": c_lab, "Cost_Pac": c_pac, "Cost_Ele": c_ele,
-            "Cost_Tra": c_tra, "Cost_Bag": c_bag, "Cost_Oth": c_oth, "Cost_Jay": c_jay, "Cost_Fix": c_fix,
-            "Plant_Expenses": plant_expenses, "Total_Amount": grand_total, "Price_Per_Kg": price_per_kg
-        }
-        
+        update_payload = {"Out_Qty_kg": new_out_qty, "Bags": new_bags, "Cost_Lab": c_lab, "Cost_Pac": c_pac, "Cost_Ele": c_ele, "Cost_Tra": c_tra, "Cost_Bag": c_bag, "Cost_Oth": c_oth, "Cost_Jay": c_jay, "Cost_Fix": c_fix, "Plant_Expenses": plant_expenses, "Total_Amount": grand_total, "Price_Per_Kg": price_per_kg}
         if update_table("production", "Invoice", invoice_id, update_payload):
-            curr_rec.update(update_payload)
-            st.rerun()
+            curr_rec.update(update_payload); st.rerun()
 
 @st.dialog("✏️ Edit Inbound Record")
 def edit_inbound_dialog(gp_id):
     t_edit = next((item for item in st.session_state["transactions"] if item.get("Gate_Pass_ID") == gp_id), None)
     if not t_edit: return
-    
     status_list = ["Pending QC", "QC Passed", "QC Passed with Rebate", "QC Rejected", "Unloading", "Completed"]
     curr_idx = status_list.index(t_edit['Status']) if t_edit['Status'] in status_list else 0
     new_status = st.selectbox("Status", status_list, index=curr_idx)
     new_gross = st.number_input("Gross Weight (kg)", value=float(t_edit.get("Gross_Weight", 0.0)), step=10.0)
     new_tare = st.number_input("Tare Weight (kg)", value=float(t_edit.get("Tare_Weight", 0.0)), step=10.0)
-    
     if st.button("Save Gate Pass", type="primary"):
         update_payload = {"Status": new_status, "Gross_Weight": new_gross, "Tare_Weight": new_tare}
         if new_gross > 0 and new_tare > 0: update_payload["Net_Weight"] = new_gross - new_tare
         if update_table("transactions", "Gate_Pass_ID", gp_id, update_payload):
-            t_edit.update(update_payload)
-            st.rerun()
+            t_edit.update(update_payload); st.rerun()
 
 @st.dialog("✏️ Edit Dispatch Record")
 def edit_outbound_dialog(dc_id):
     d_edit = next((item for item in st.session_state["dispatches"] if item.get("Dispatch_ID") == dc_id), None)
     if not d_edit: return
-    
     new_veh = st.text_input("Vehicle Number", value=d_edit.get("Vehicle_No", ""))
     dest_idx = st.session_state["locations"].index(d_edit["Destination"]) if d_edit["Destination"] in st.session_state["locations"] else 0
     new_dest = st.selectbox("Destination", st.session_state["locations"], index=dest_idx)
     new_qty = st.number_input("Quantity (Tons)", value=float(d_edit.get("Quantity_Tons", 0.0)), step=1.0)
-    
     if st.button("Save Dispatch", type="primary"):
         bag_size = d_edit.get("Bag_Size", 50)
         update_payload = {"Vehicle_No": new_veh, "Destination": new_dest, "Quantity_Tons": new_qty, "Quantity_kg": new_qty * 1000, "Bag_Count": int((new_qty * 1000) / bag_size)}
         if update_table("dispatches", "Dispatch_ID", dc_id, update_payload):
-            d_edit.update(update_payload)
-            st.rerun()
+            d_edit.update(update_payload); st.rerun()
 
 # --- LOGIN ---
 def login():
@@ -287,7 +281,6 @@ def login():
             st.markdown(f"""<div style="display: flex; align-items: center; justify-content: center; gap: 15px; margin-bottom: 25px; margin-top: 50px;"><img src="data:image/png;base64,{b64_logo}" width="65"><h1 style="margin: 0; font-size: 32px; color: #111827;">KJL Poultries Pvt Ltd</h1></div>""", unsafe_allow_html=True)
         else:
             st.markdown("<h1 style='text-align: center; margin-bottom: 25px; margin-top: 50px; color: #111827;'>KJL Poultries Pvt Ltd</h1>", unsafe_allow_html=True)
-            
         with st.form("login"):
             user = st.text_input("Username")
             pwd = st.text_input("Password", type="password")
@@ -441,7 +434,6 @@ def dashboard():
                 fg_cols = st.columns(max(1, len(finished_goods)))
                 for idx, (feed, qty) in enumerate(finished_goods.items()):
                     fg_cols[idx % len(fg_cols)].metric(label=f"{feed}", value=f"{qty:,.2f} Tons")
-                
             st.divider()
             if not st.session_state["feed_names"]: st.warning("⚠️ No Feed Names available to dispatch.")
             else:
@@ -469,9 +461,7 @@ def dashboard():
                             }
                             if insert_table("dispatches", new_data):
                                 st.session_state["dispatches"].append(new_data)
-                                st.success("✅ Dispatch logged successfully!")
-                                time.sleep(1)
-                                st.rerun()
+                                st.success("✅ Dispatch logged successfully!"); time.sleep(1); st.rerun()
 
         elif admin_nav == "📦 Warehouse & Stock":
             st.markdown("<h2 style='color:#111827;'>Warehouse Inventory</h2>", unsafe_allow_html=True)
@@ -490,9 +480,7 @@ def dashboard():
                         new_data = {"Date": adj_date.strftime("%d-%m-%Y"), "Item": adj_item, "Type": adj_type, "Quantity": adj_qty, "Reason": adj_reason}
                         if insert_table("adjustments", new_data):
                             st.session_state["adjustments"].append(new_data)
-                            st.success("✅ Adjustment applied successfully!")
-                            time.sleep(1)
-                            st.rerun()
+                            st.success("✅ Adjustment applied successfully!"); time.sleep(1); st.rerun()
 
         elif admin_nav == "📑 Reports & Exports":
             st.markdown("<h2 style='color:#111827;'>Data Export</h2>", unsafe_allow_html=True)
@@ -521,25 +509,28 @@ def dashboard():
                     st.success(f"✅ User created!"); st.rerun()
 
         elif admin_nav == "🗂️ Master Data":
-            st.markdown("<h2 style='color:#111827;'>Master Data & Pricing</h2>", unsafe_allow_html=True)
+            st.markdown("<h2 style='color:#111827;'>Master Data & Pricing (Cloud Synced)</h2>", unsafe_allow_html=True)
             tab1, tab2, tab3 = st.tabs(["📦 Materials & Costing", "🤝 Suppliers & Locations", "🧪 Feed Formula Builder"])
             with tab1:
                 new_material = st.text_input("Add New Material")
                 new_mat_cost = st.number_input("Initial Cost (₹/kg)", min_value=0.0)
-                if st.button("Add Material") and new_material and new_material not in st.session_state["materials"]:
-                    st.session_state["materials"].append(new_material.upper())
-                    st.session_state["material_costs"][new_material.upper()] = new_mat_cost
-                    st.rerun()
+                if st.button("Add Material") and new_material and new_material.upper() not in st.session_state["materials"]:
+                    if insert_table("materials", {"Name": new_material.upper(), "Cost": new_mat_cost}):
+                        st.session_state["materials"].append(new_material.upper())
+                        st.session_state["material_costs"][new_material.upper()] = new_mat_cost
+                        st.success("✅ Saved to cloud!"); time.sleep(1); st.rerun()
             with tab2:
                 col1, col2 = st.columns(2)
                 with col1:
                     new_vendor = st.text_input("Add New Vendor")
                     if st.button("Add Vendor") and new_vendor and new_vendor not in st.session_state["vendors"]:
-                        st.session_state["vendors"].append(new_vendor); st.rerun()
+                        if insert_table("vendors", {"Name": new_vendor}):
+                            st.session_state["vendors"].append(new_vendor); st.success("✅ Saved!"); time.sleep(1); st.rerun()
                 with col2:
                     new_loc = st.text_input("Add New Farm / Customer")
                     if st.button("Add Location") and new_loc and new_loc not in st.session_state["locations"]:
-                        st.session_state["locations"].append(new_loc); st.rerun()
+                        if insert_table("locations", {"Name": new_loc}):
+                            st.session_state["locations"].append(new_loc); st.success("✅ Saved!"); time.sleep(1); st.rerun()
             with tab3:
                 reset_key = st.session_state["formula_reset_key"]
                 new_formula_name = st.text_input("Formula Name", key=f"fname_{reset_key}")
@@ -556,8 +547,11 @@ def dashboard():
                     if total_kg == 1000.0:
                         st.success("Total: 1,000 kg")
                         if st.button("✔️ Save Feed Formula", type="primary"):
-                            st.session_state["bom"][new_formula_name] = {k: v / 1000.0 for k, v in quantities.items()}
-                            st.session_state["formula_reset_key"] += 1; st.rerun()
+                            recipe = {k: v / 1000.0 for k, v in quantities.items()}
+                            if insert_table("bom", {"Formula_Name": new_formula_name, "Recipe": recipe}):
+                                st.session_state["bom"][new_formula_name] = recipe
+                                st.session_state["formula_reset_key"] += 1
+                                st.success("✅ Formula saved to cloud!"); time.sleep(1); st.rerun()
                     else: st.error(f"Total: {total_kg:,.0f} / 1,000 kg")
 
 # --- GATE SECURITY ---

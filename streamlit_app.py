@@ -9,7 +9,7 @@ import json
 import time
 
 # --- PAGE CONFIGURATION ---
-st.set_page_config(page_title="KJL FeedOps", page_icon="Logo png.png", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="KJL Poultries Pvt Ltd", page_icon="Logo png.png", layout="wide", initial_sidebar_state="expanded")
 
 # --- CUSTOM CSS (MODERN SAAS UI & CUSTOM STATUS COLORS) ---
 st.markdown("""

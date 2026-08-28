@@ -9,7 +9,7 @@ import json
 import time
 
 # --- PAGE CONFIGURATION ---
-st.set_page_config(page_title="KJL Poultries Pvt Ltd ERP", page_icon="🌿", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="KJL FeedOps", page_icon="Logo png.png", layout="wide", initial_sidebar_state="expanded")
 
 # --- CUSTOM CSS (MODERN SAAS UI & CUSTOM STATUS COLORS) ---
 st.markdown("""
@@ -128,6 +128,19 @@ if "users" not in st.session_state:
 LOGO_FILE = "Logo png.png"
 
 # --- HELPER FUNCTIONS ---
+def get_next_id(data_list, id_key):
+    # Safely finds the highest existing ID number and adds 1
+    max_id = 1000
+    for item in data_list:
+        val = item.get(id_key, "")
+        try:
+            num = int(val.split("-")[-1])
+            if num > max_id: 
+                max_id = num
+        except: 
+            pass
+    return max_id + 1
+
 def calculate_inventory():
     inventory = {mat: 50000.0 for mat in st.session_state["materials"]} 
     finished_goods = {feed: 0.0 for feed in st.session_state["feed_names"]}
@@ -180,7 +193,7 @@ def format_status(status_text):
     else: return f"<span>{status_text}</span>"
 
 # =====================================================================
-# DRILL-DOWN POP-UP DIALOGS (OMITTED EXTRA CODE FOR BREVITY - KEEPING SAME AS BEFORE)
+# DRILL-DOWN POP-UP DIALOGS
 # =====================================================================
 @st.dialog("📥 Daily Inbound Details", width="large")
 def view_daily_inbound_dialog(date_str):
@@ -278,9 +291,9 @@ def login():
         if os.path.exists(LOGO_FILE):
             with open(LOGO_FILE, "rb") as img_file:
                 b64_logo = base64.b64encode(img_file.read()).decode()
-            st.markdown(f"""<div style="display: flex; align-items: center; justify-content: center; gap: 15px; margin-bottom: 25px; margin-top: 50px;"><img src="data:image/png;base64,{b64_logo}" width="65"><h1 style="margin: 0; font-size: 32px; color: #111827;">KJL Poultries Pvt Ltd</h1></div>""", unsafe_allow_html=True)
+            st.markdown(f"""<div style="display: flex; align-items: center; justify-content: center; gap: 15px; margin-bottom: 25px; margin-top: 50px;"><img src="data:image/png;base64,{b64_logo}" width="65"><h1 style="margin: 0; font-size: 32px; color: #111827;">KJL FeedOps</h1></div>""", unsafe_allow_html=True)
         else:
-            st.markdown("<h1 style='text-align: center; margin-bottom: 25px; margin-top: 50px; color: #111827;'>KJL Poultries Pvt Ltd</h1>", unsafe_allow_html=True)
+            st.markdown("<h1 style='text-align: center; margin-bottom: 25px; margin-top: 50px; color: #111827;'>KJL FeedOps</h1>", unsafe_allow_html=True)
         with st.form("login"):
             user = st.text_input("Username")
             pwd = st.text_input("Password", type="password")
@@ -297,9 +310,9 @@ def dashboard():
     if os.path.exists(LOGO_FILE):
         with open(LOGO_FILE, "rb") as img_file:
             b64_logo = base64.b64encode(img_file.read()).decode()
-        st.sidebar.markdown(f"""<div style="display: flex; align-items: center; gap: 12px; margin-bottom: 20px; margin-top: 10px;"><img src="data:image/png;base64,{b64_logo}" width="45"><h1 style="margin: 0; font-size: 22px; color: #1B5E20 !important;">KJL Poultries</h1></div>""", unsafe_allow_html=True)
+        st.sidebar.markdown(f"""<div style="display: flex; align-items: center; gap: 12px; margin-bottom: 20px; margin-top: 10px;"><img src="data:image/png;base64,{b64_logo}" width="45"><h1 style="margin: 0; font-size: 22px; color: #1B5E20 !important;">KJL FeedOps</h1></div>""", unsafe_allow_html=True)
     else:
-        st.sidebar.markdown(f"<h1>KJL Poultries</h1>", unsafe_allow_html=True)
+        st.sidebar.markdown(f"<h1>KJL FeedOps</h1>", unsafe_allow_html=True)
         
     st.sidebar.markdown(f"**👤 {st.session_state['users'][st.session_state['username']]['name']}**")
     if st.sidebar.button("🚪 Logout", use_container_width=True):
@@ -401,9 +414,10 @@ def dashboard():
                 rm_total_cost = sum([(prod_kg * pct) * st.session_state["material_costs"].get(mat, 0) for mat, pct in recipe.items()])
 
                 if st.button("✔️ Save Production Record", type="primary"):
+                    next_inv_num = get_next_id(st.session_state["production"], "Invoice")
                     new_data = {
                         "Date": p_date.strftime("%d.%m.%Y"),
-                        "Invoice": f"FMP-{datetime.datetime.now().strftime('%m%y')}-{1000 + len(st.session_state['production'])}",
+                        "Invoice": f"FMP-{datetime.datetime.now().strftime('%m%y')}-{next_inv_num}",
                         "Formula": p_form, "Feed_Name": p_feed, "Location": p_loc,
                         "In_Qty_kg": prod_kg, "Out_Qty_kg": prod_kg, "Bags": int(prod_kg/50), "Bag_Size": 50,
                         "Cost_Lab": 0, "Cost_Pac": 0, "Cost_Ele": 0, "Cost_Tra": 0, "Cost_Bag": 0, "Cost_Oth": 0, "Cost_Jay": 0, "Cost_Fix": 0,
@@ -454,8 +468,9 @@ def dashboard():
                         elif disp_tons > finished_goods.get(feed_type, 0): st.error(f"⚠️ Insufficient Inventory!")
                         else:
                             bag_kg = 70 if "70" in bag_type else 50
+                            next_dc_num = get_next_id(st.session_state["dispatches"], "Dispatch_ID")
                             new_data = {
-                                "Dispatch_ID": f"DC-{1000 + len(st.session_state['dispatches']) + 1}", "Date": disp_date.strftime("%d-%m-%Y"), "Time": datetime.datetime.now().strftime("%I:%M %p"),
+                                "Dispatch_ID": f"DC-{next_dc_num}", "Date": disp_date.strftime("%d-%m-%Y"), "Time": datetime.datetime.now().strftime("%I:%M %p"),
                                 "Vehicle_No": vehicle_no.upper(), "Destination": destination, "Feed_Type": feed_type,
                                 "Quantity_Tons": disp_tons, "Quantity_kg": disp_tons * 1000, "Bag_Size": bag_kg, "Bag_Count": int((disp_tons * 1000) / bag_kg)
                             }
@@ -565,8 +580,9 @@ def dashboard():
                 material = st.selectbox("Material / Product", st.session_state["materials"])
                 vendor = st.selectbox("Vendor Name", st.session_state["vendors"])
                 if st.form_submit_button("Submit & Send to Lab", type="primary") and vehicle_no:
+                    next_gp_num = get_next_id(st.session_state["transactions"], "Gate_Pass_ID")
                     new_data = {
-                        "Gate_Pass_ID": f"GP-{1000 + len(st.session_state['transactions']) + 1}", 
+                        "Gate_Pass_ID": f"GP-{next_gp_num}", 
                         "Date": datetime.datetime.now().strftime("%d-%m-%Y"), 
                         "Time": datetime.datetime.now().strftime("%I:%M %p"), 
                         "Vehicle_No": vehicle_no.upper(), "Material": material, "Vendor": vendor, "Status": "Pending QC"

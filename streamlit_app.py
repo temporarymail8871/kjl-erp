@@ -128,8 +128,11 @@ if "users" not in st.session_state:
 LOGO_FILE = "Logo png.png"
 
 # --- HELPER FUNCTIONS ---
+def get_ist_now():
+    ist = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
+    return datetime.datetime.now(ist)
+
 def get_next_id(data_list, id_key):
-    # Safely finds the highest existing ID number and adds 1
     max_id = 1000
     for item in data_list:
         val = item.get(id_key, "")
@@ -195,13 +198,13 @@ def format_status(status_text):
 # =====================================================================
 # DRILL-DOWN POP-UP DIALOGS
 # =====================================================================
-@st.dialog("📥 Daily Inbound Details", width="large")
+@st.dialog("📥 Daily Inbound Details & Audit Trail", width="large")
 def view_daily_inbound_dialog(date_str):
     records = [t for t in st.session_state["transactions"] if t.get("Date") == date_str and t.get("Status") == "Completed"]
     if not records: st.info("No inbound records for today.")
     else:
-        rows = "".join([f"<tr><td>{t.get('Time','')}</td><td style='font-weight:600;'>{t.get('Gate_Pass_ID','')}</td><td>{t.get('Material','')}</td><td>{t.get('Vehicle_No','')}</td><td style='font-weight:600;'>{t.get('Net_Weight', 0):,.0f} kg</td><td>{t.get('Vendor','')}</td></tr>" for t in reversed(records)])
-        render_table(["Time", "Gate Pass", "Material", "Vehicle", "Net Wt", "Vendor"], rows)
+        rows = "".join([f"<tr><td>{t.get('Time','')}</td><td style='font-weight:600;'>{t.get('Gate_Pass_ID','')}</td><td>{t.get('Vehicle_No','')}</td><td>{t.get('QC_Time','-')}</td><td>{t.get('Gross_Time','-')}</td><td>{t.get('Tare_Time','-')}</td><td style='font-weight:600;'>{t.get('Net_Weight', 0):,.0f} kg</td></tr>" for t in reversed(records)])
+        render_table(["Entry", "Gate Pass", "Vehicle", "QC Check", "Gross Wt", "Tare Wt", "Net Wt"], rows)
 
 @st.dialog("🚛 Active Vehicles in Plant", width="large")
 def view_active_vehicles_dialog(date_str):
@@ -326,7 +329,7 @@ def dashboard():
         if admin_nav == "📊 Dashboard Overview":
             st.markdown("<h2 style='color:#111827;'>Operations Dashboard</h2>", unsafe_allow_html=True)
             tab_ops, tab_fin, tab_sc = st.tabs(["1️⃣ Executive Operations Pulse", "2️⃣ Financial & Costing Hub", "3️⃣ Supply Chain Logistics"])
-            today_str = datetime.datetime.now().strftime("%d-%m-%Y")
+            today_str = get_ist_now().strftime("%d-%m-%Y")
             today_tx = [t for t in st.session_state["transactions"] if t.get("Date") == today_str]
             today_disp = [d for d in st.session_state["dispatches"] if d.get("Date") == today_str]
             today_prod = [p for p in st.session_state["production"] if p.get("Date") == today_str]
@@ -354,7 +357,7 @@ def dashboard():
                 col_a, col_b = st.columns([2, 1])
                 with col_a:
                     st.markdown("**Recent Production vs. Dispatch Trend**")
-                    dates = pd.date_range(end=datetime.date.today(), periods=7)
+                    dates = pd.date_range(end=get_ist_now().date(), periods=7)
                     df_trend = pd.DataFrame({'Date': dates, 'Produced': [12, 15, 14, 18, total_prod if total_prod>0 else 16, 15, total_prod], 'Dispatched': [10, 14, 12, 15, total_qty_out if total_qty_out>0 else 14, 13, total_qty_out]}).melt('Date', var_name='Metric', value_name='Tons')
                     area_chart = alt.Chart(df_trend).mark_area(opacity=0.5).encode(x='Date:T', y='Tons:Q', color=alt.Color('Metric:N', scale=alt.Scale(range=['#1B5E20', '#A5D6A7']))).properties(height=300)
                     st.altair_chart(area_chart, use_container_width=True)
@@ -402,7 +405,7 @@ def dashboard():
 
             with tab_form:
                 c1, c2, c3, c4, c5 = st.columns([1.2, 1, 1.5, 1.5, 1.5])
-                with c1: p_date = st.date_input(f"Date *", datetime.date.today())
+                with c1: p_date = st.date_input(f"Date *", get_ist_now().date())
                 with c2: p_dc = st.text_input("Dc No.")
                 with c3: p_loc = st.selectbox("Feed Mill *", st.session_state["locations"])
                 with c4: p_feed = st.selectbox("Feed Name *", st.session_state["feed_names"])
@@ -417,7 +420,7 @@ def dashboard():
                     next_inv_num = get_next_id(st.session_state["production"], "Invoice")
                     new_data = {
                         "Date": p_date.strftime("%d.%m.%Y"),
-                        "Invoice": f"FMP-{datetime.datetime.now().strftime('%m%y')}-{next_inv_num}",
+                        "Invoice": f"FMP-{get_ist_now().strftime('%m%y')}-{next_inv_num}",
                         "Formula": p_form, "Feed_Name": p_feed, "Location": p_loc,
                         "In_Qty_kg": prod_kg, "Out_Qty_kg": prod_kg, "Bags": int(prod_kg/50), "Bag_Size": 50,
                         "Cost_Lab": 0, "Cost_Pac": 0, "Cost_Ele": 0, "Cost_Tra": 0, "Cost_Bag": 0, "Cost_Oth": 0, "Cost_Jay": 0, "Cost_Fix": 0,
@@ -455,7 +458,7 @@ def dashboard():
                 with st.form("dispatch_form", clear_on_submit=False):
                     colA, colB = st.columns(2)
                     with colA:
-                        disp_date = st.date_input("Dispatch Date", datetime.date.today())
+                        disp_date = st.date_input("Dispatch Date", get_ist_now().date())
                         vehicle_no = st.text_input("Vehicle Number")
                         destination = st.selectbox("Destination Location", st.session_state["locations"] if st.session_state["locations"] else ["Default Location"])
                     with colB:
@@ -470,7 +473,7 @@ def dashboard():
                             bag_kg = 70 if "70" in bag_type else 50
                             next_dc_num = get_next_id(st.session_state["dispatches"], "Dispatch_ID")
                             new_data = {
-                                "Dispatch_ID": f"DC-{next_dc_num}", "Date": disp_date.strftime("%d-%m-%Y"), "Time": datetime.datetime.now().strftime("%I:%M %p"),
+                                "Dispatch_ID": f"DC-{next_dc_num}", "Date": disp_date.strftime("%d-%m-%Y"), "Time": get_ist_now().strftime("%I:%M %p"),
                                 "Vehicle_No": vehicle_no.upper(), "Destination": destination, "Feed_Type": feed_type,
                                 "Quantity_Tons": disp_tons, "Quantity_kg": disp_tons * 1000, "Bag_Size": bag_kg, "Bag_Count": int((disp_tons * 1000) / bag_kg)
                             }
@@ -484,7 +487,7 @@ def dashboard():
                 with st.form("adj_form", clear_on_submit=True):
                     c1, c2, c3 = st.columns(3)
                     with c1:
-                        adj_date = st.date_input("Date", datetime.date.today())
+                        adj_date = st.date_input("Date", get_ist_now().date())
                         adj_item = st.selectbox("Item", st.session_state["materials"] + st.session_state["feed_names"])
                     with c2:
                         adj_type = st.radio("Adjustment Type", ["Deduction (-)", "Addition (+)"])
@@ -500,7 +503,7 @@ def dashboard():
         elif admin_nav == "📑 Reports & Exports":
             st.markdown("<h2 style='color:#111827;'>Data Export</h2>", unsafe_allow_html=True)
             export_type = st.radio("Export:", ["Raw Material", "Dispatches", "Production"], horizontal=True)
-            dates = st.date_input("Date Range", [datetime.date.today(), datetime.date.today()])
+            dates = st.date_input("Date Range", [get_ist_now().date(), get_ist_now().date()])
             if len(dates) == 2:
                 start_date, end_date = dates
                 if export_type == "Raw Material": filtered = [t for t in st.session_state["transactions"] if start_date <= datetime.datetime.strptime(t.get("Date", "01-01-2000").replace(".","-"), "%d-%m-%Y").date() <= end_date]
@@ -581,10 +584,11 @@ def dashboard():
                 vendor = st.selectbox("Vendor Name", st.session_state["vendors"])
                 if st.form_submit_button("Submit & Send to Lab", type="primary") and vehicle_no:
                     next_gp_num = get_next_id(st.session_state["transactions"], "Gate_Pass_ID")
+                    now_ist = get_ist_now()
                     new_data = {
                         "Gate_Pass_ID": f"GP-{next_gp_num}", 
-                        "Date": datetime.datetime.now().strftime("%d-%m-%Y"), 
-                        "Time": datetime.datetime.now().strftime("%I:%M %p"), 
+                        "Date": now_ist.strftime("%d-%m-%Y"), 
+                        "Time": now_ist.strftime("%I:%M %p"), 
                         "Vehicle_No": vehicle_no.upper(), "Material": material, "Vendor": vendor, "Status": "Pending QC"
                     }
                     if insert_table("transactions", new_data):
@@ -596,7 +600,7 @@ def dashboard():
                         st.error("❌ Failed to register. See database error above.")
                     
         with tab_history:
-            filter_date = st.date_input("Select Date", datetime.date.today(), key="sec_date").strftime("%d-%m-%Y")
+            filter_date = st.date_input("Select Date", get_ist_now().date(), key="sec_date").strftime("%d-%m-%Y")
             filtered_tx = [t for t in st.session_state["transactions"] if t.get("Date") == filter_date]
             if not filtered_tx: st.info(f"No vehicles registered on {filter_date}.")
             else:
@@ -618,15 +622,16 @@ def dashboard():
                     if st.form_submit_button("Submit QC Results", type="primary"):
                         for t in st.session_state["transactions"]:
                             if t.get("Gate_Pass_ID") == selected_gp:
-                                if update_table("transactions", "Gate_Pass_ID", t["Gate_Pass_ID"], {"Status": qc_decision, "QC_Remarks": remarks.strip()}):
-                                    t["Status"] = qc_decision; t["QC_Remarks"] = remarks.strip()
+                                qc_time_str = get_ist_now().strftime("%I:%M %p")
+                                if update_table("transactions", "Gate_Pass_ID", t["Gate_Pass_ID"], {"Status": qc_decision, "QC_Remarks": remarks.strip(), "QC_Time": qc_time_str}):
+                                    t["Status"] = qc_decision; t["QC_Remarks"] = remarks.strip(); t["QC_Time"] = qc_time_str
                                     st.success("✅ QC Results Submitted")
                                     time.sleep(1)
                                     st.rerun() 
             else: st.info("No vehicles pending QC.")
             
         with tab_history:
-            filter_date = st.date_input("Select Date", datetime.date.today(), key="qc_date").strftime("%d-%m-%Y")
+            filter_date = st.date_input("Select Date", get_ist_now().date(), key="qc_date").strftime("%d-%m-%Y")
             filtered_tx = [t for t in st.session_state["transactions"] if t.get("Date") == filter_date and t.get("Status") != "Pending QC"]
             if not filtered_tx: st.info(f"No QC tests completed on {filter_date}.")
             else:
@@ -647,8 +652,9 @@ def dashboard():
                     if st.form_submit_button("Save Gross Weight", type="primary") and gross_wt > 0:
                         for t in st.session_state["transactions"]:
                             if t.get("Gate_Pass_ID") == gp_gross:
-                                if update_table("transactions", "Gate_Pass_ID", t["Gate_Pass_ID"], {"Gross_Weight": gross_wt, "Status": "Unloading"}):
-                                    t["Gross_Weight"] = gross_wt; t["Status"] = "Unloading"
+                                gross_time_str = get_ist_now().strftime("%I:%M %p")
+                                if update_table("transactions", "Gate_Pass_ID", t["Gate_Pass_ID"], {"Gross_Weight": gross_wt, "Status": "Unloading", "Gross_Time": gross_time_str}):
+                                    t["Gross_Weight"] = gross_wt; t["Status"] = "Unloading"; t["Gross_Time"] = gross_time_str
                                     st.success("✅ Gross Weight Saved")
                                     time.sleep(1)
                                     st.rerun()
@@ -663,14 +669,15 @@ def dashboard():
                         for t in st.session_state["transactions"]:
                             if t.get("Gate_Pass_ID") == gp_tare and tare_wt < t.get("Gross_Weight", 0):
                                 net = t["Gross_Weight"] - tare_wt
-                                if update_table("transactions", "Gate_Pass_ID", t["Gate_Pass_ID"], {"Tare_Weight": tare_wt, "Net_Weight": net, "Status": "Completed"}):
-                                    t["Tare_Weight"] = tare_wt; t["Net_Weight"] = net; t["Status"] = "Completed"
+                                tare_time_str = get_ist_now().strftime("%I:%M %p")
+                                if update_table("transactions", "Gate_Pass_ID", t["Gate_Pass_ID"], {"Tare_Weight": tare_wt, "Net_Weight": net, "Status": "Completed", "Tare_Time": tare_time_str}):
+                                    t["Tare_Weight"] = tare_wt; t["Net_Weight"] = net; t["Status"] = "Completed"; t["Tare_Time"] = tare_time_str
                                     st.success("✅ Vehicle Completed")
                                     time.sleep(1)
                                     st.rerun()
                                     
         with tab_history:
-            filter_date = st.date_input("Select Date", datetime.date.today(), key="wb_date").strftime("%d-%m-%Y")
+            filter_date = st.date_input("Select Date", get_ist_now().date(), key="wb_date").strftime("%d-%m-%Y")
             filtered_tx = [t for t in st.session_state["transactions"] if t.get("Date") == filter_date and (t.get("Gross_Weight", 0) > 0 or t.get("Tare_Weight", 0) > 0)]
             if not filtered_tx: st.info(f"No weighments completed on {filter_date}.")
             else:

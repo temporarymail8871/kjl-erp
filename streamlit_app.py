@@ -116,6 +116,7 @@ if "users" not in st.session_state:
         "admin": {"password": "123", "role": "Admin", "name": "Durga Prasad P.", "emp_id": "KJL-001"},
         "sec": {"password": "123", "role": "Security", "name": "Gate Guard", "emp_id": "KJL-002"},
         "lab": {"password": "123", "role": "QC_Lab", "name": "Lab Tech", "emp_id": "KJL-003"},
+        "loa": {"password": "123", "role": "Loading", "name": "Loading Sup", "emp_id": "KJL-005"},
         "wb": {"password": "123", "role": "Weighbridge", "name": "Scale Operator", "emp_id": "KJL-004"}
     }
 

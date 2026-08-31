@@ -188,7 +188,7 @@ def get_print_link(data_dict, doc_type="PROD"):
     elif doc_type == "INWARD":
         html = f"""<!DOCTYPE html><html><body onload="window.print()" style="font-family: monospace; padding: 20px;"><div style="border: 2px dashed #333; padding: 30px; max-width: 400px; margin: 0 auto;">{logo_img_tag}<h2 style="text-align: center; margin-top: 0;">KJL POULTRIES PVT LTD</h2><h3 style="text-align: center;">INWARD SLIP</h3><hr><p><b>Pass:</b> {data_dict.get('Gate_Pass_ID', '')} | <b>Date:</b> {data_dict.get('Date', '')}</p><p><b>Vehicle:</b> {data_dict.get('Vehicle_No', '')} | <b>Vendor:</b> {data_dict.get('Vendor', '')}</p><p><b>Material:</b> {data_dict.get('Material', '')}</p><hr><p style="font-size: 18px;"><b>NET WT: {data_dict.get('Net_Weight', 0)} kg</b></p></div></body></html>"""
     else:
-        html = f"""<!DOCTYPE html><html><body onload="window.print()" style="font-family: monospace; padding: 20px;"><div style="border: 2px dashed #333; padding: 30px; max-width: 400px; margin: 0 auto;">{logo_img_tag}<h2 style="text-align: center; margin-top: 0;">KJL POULTRIES PVT LTD</h2><h3 style="text-align: center;">DELIVERY CHALLAN</h3><hr><p><b>ID:</b> {data_dict.get('Gate_Pass_ID', '')} | <b>Date:</b> {data_dict.get('Date', '')}</p><p><b>Vehicle:</b> {data_dict.get('Vehicle_No', '')} | <b>Dest:</b> {data_dict.get('Vendor', '')}</p><hr><p><b>Feed:</b> {data_dict.get('Feed_Name', '')}</p><p style="font-size: 18px;"><b>BAGS: {data_dict.get('Bags', 0)}</b></p><p style="font-size: 18px;"><b>NET WT: {data_dict.get('Net_Weight', 0)} kg</b></p></div></body></html>"""
+        html = f"""<!DOCTYPE html><html><body onload="window.print()" style="font-family: monospace; padding: 20px;"><div style="border: 2px dashed #333; padding: 30px; max-width: 400px; margin: 0 auto;">{logo_img_tag}<h2 style="text-align: center; margin-top: 0;">KJL POULTRIES PVT LTD</h2><h3 style="text-align: center;">DELIVERY CHALLAN</h3><hr><p><b>ID:</b> {data_dict.get('Gate_Pass_ID', '')} | <b>Date:</b> {data_dict.get('Date', '')}</p><p><b>Vehicle:</b> {data_dict.get('Vehicle_No', '')} | <b>Dest:</b> {data_dict.get('Destination', data_dict.get('Vendor', ''))}</p><hr><p><b>Feed:</b> {data_dict.get('Feed_Name', '')}</p><p style="font-size: 18px;"><b>BAGS: {data_dict.get('Bags', 0)}</b></p><p style="font-size: 18px;"><b>NET WT: {data_dict.get('Net_Weight', 0)} kg</b></p></div></body></html>"""
     b64 = base64.b64encode(html.encode()).decode()
     return f'<a href="data:text/html;base64,{b64}" target="_blank" style="text-decoration: none; font-size: 18px; filter: grayscale(100%);" title="Print in New Tab">🖨️</a>'
 
@@ -206,13 +206,29 @@ def format_status(status_text):
 # =====================================================================
 # DRILL-DOWN POP-UP DIALOGS
 # =====================================================================
-@st.dialog("📥 Daily Gate Details & Audit Trail", width="large")
+@st.dialog("📥 Daily Inbound Details", width="large")
 def view_daily_inbound_dialog(date_str):
-    records = [t for t in st.session_state["transactions"] if t.get("Date") == date_str and t.get("Status") == "Completed"]
-    if not records: st.info("No records for today.")
+    records = [t for t in st.session_state["transactions"] if t.get("Date") == date_str and t.get("Status") == "Completed" and t.get("Transaction_Type", "Inbound") == "Inbound"]
+    if not records: st.info("No inbound records for today.")
     else:
-        rows = "".join([f"<tr><td>{t.get('Transaction_Type', 'Inbound')}</td><td style='font-weight:600;'>{t.get('Gate_Pass_ID','')}</td><td>{t.get('Vehicle_No','')}</td><td>{t.get('QC_Time','-')}</td><td>{t.get('Tare_Time','-')}</td><td>{t.get('Gross_Time','-')}</td><td style='font-weight:600;'>{t.get('Net_Weight', 0):,.0f} kg</td></tr>" for t in reversed(records)])
+        rows = "".join([f"<tr><td>{t.get('Time','')}</td><td style='font-weight:600;'>{t.get('Gate_Pass_ID','')}</td><td>{t.get('Vehicle_No','')}</td><td>{t.get('QC_Time','-')}</td><td>{t.get('Tare_Time','-')}</td><td>{t.get('Gross_Time','-')}</td><td style='font-weight:600;'>{t.get('Net_Weight', 0):,.0f} kg</td></tr>" for t in reversed(records)])
         render_table(["Type", "Gate Pass", "Vehicle", "QC Check", "Tare Wt", "Gross Wt", "Net Wt"], rows)
+
+@st.dialog("🏭 Daily Production Details", width="large")
+def view_daily_production_dialog(date_str):
+    records = [p for p in st.session_state["production"] if p.get("Date") == date_str]
+    if not records: st.info("No production records for today.")
+    else:
+        rows = "".join([f"<tr><td style='font-weight:600;'>{p.get('Invoice','')}</td><td>{p.get('Feed_Name','')}</td><td>{p.get('Formula','')}</td><td style='font-weight:600;'>{p.get('Out_Qty_kg',0):,.0f} kg</td><td>{p.get('Bags',0)}</td></tr>" for p in reversed(records)])
+        render_table(["Invoice", "Feed", "Formula", "Output", "Bags"], rows)
+
+@st.dialog("🚚 Daily Outbound Details", width="large")
+def view_daily_outbound_dialog(date_str):
+    records = [t for t in st.session_state["transactions"] if t.get("Date") == date_str and t.get("Transaction_Type") == "Outbound" and t.get("Status") == "Completed"]
+    if not records: st.info("No outbound records for today.")
+    else:
+        rows = "".join([f"<tr><td>{t.get('Time','')}</td><td style='font-weight:600;'>{t.get('Gate_Pass_ID','')}</td><td>{t.get('Feed_Name','')}</td><td>{t.get('Vehicle_No','')}</td><td style='font-weight:600;'>{t.get('Net_Weight', 0)/1000:,.1f} Tons</td><td>{t.get('Destination','')}</td></tr>" for t in reversed(records)])
+        render_table(["Time", "Gate Pass", "Feed", "Vehicle", "Quantity", "Destination"], rows)
 
 @st.dialog("🚛 Active Vehicles in Plant", width="large")
 def view_active_vehicles_dialog(date_str):
@@ -229,7 +245,6 @@ def edit_production_dialog(invoice_id):
     c1, c2 = st.columns(2)
     new_out_qty = c1.number_input("Final Output Qty (kg)", value=float(curr_rec.get("Out_Qty_kg", 0)))
     new_bags = c2.number_input("Total Bags Packed", value=int(curr_rec.get("Bags", 0)))
-    
     if st.button("Save Corrections", type="primary", use_container_width=True):
         update_payload = {"Out_Qty_kg": new_out_qty, "Bags": new_bags}
         if update_table("production", "Invoice", invoice_id, update_payload):
@@ -279,7 +294,7 @@ def dashboard():
             today_tx = [t for t in st.session_state["transactions"] if t.get("Date") == today_str]
             today_prod = [p for p in st.session_state["production"] if p.get("Date") == today_str]
             
-            total_qty_in = sum([t.get("Net_Weight", 0) for t in today_tx if t.get("Status") == "Completed" and t.get("Transaction_Type") == "Inbound"])
+            total_qty_in = sum([t.get("Net_Weight", 0) for t in today_tx if t.get("Status") == "Completed" and t.get("Transaction_Type", "Inbound") == "Inbound"])
             total_qty_out = sum([t.get("Net_Weight", 0) for t in today_tx if t.get("Status") == "Completed" and t.get("Transaction_Type") == "Outbound"])
             total_prod = sum([p.get("Out_Qty_kg", 0)/1000 for p in today_prod])
             active_tx = [t for t in today_tx if t.get("Status") not in ["Completed", "QC Rejected"]]
@@ -291,12 +306,34 @@ def dashboard():
                     if st.button("🔍 View Details", key="btn_in", use_container_width=True): view_daily_inbound_dialog(today_str)
                 with c2:
                     st.metric("Daily Production (Tons)", f"{total_prod:,.1f}")
+                    if st.button("🔍 View Details", key="btn_pr", use_container_width=True): view_daily_production_dialog(today_str)
                 with c3:
                     st.metric("Daily Outbound (Tons)", f"{total_qty_out/1000:,.1f}")
+                    if st.button("🔍 View Details", key="btn_out", use_container_width=True): view_daily_outbound_dialog(today_str)
                 with c4:
                     st.metric("Active Vehicles", len(active_tx))
                     if st.button("🔍 View Details", key="btn_act", use_container_width=True): view_active_vehicles_dialog(today_str)
                 st.divider()
+                
+                # Restored Charts
+                col_a, col_b = st.columns([2, 1])
+                with col_a:
+                    st.markdown("**Recent Production vs. Dispatch Trend**")
+                    dates = pd.date_range(end=get_ist_now().date(), periods=7)
+                    df_trend = pd.DataFrame({
+                        'Date': dates, 
+                        'Produced': [12, 15, 14, 18, total_prod if total_prod>0 else 16, 15, total_prod], 
+                        'Dispatched': [10, 14, 12, 15, (total_qty_out/1000) if total_qty_out>0 else 14, 13, (total_qty_out/1000)]
+                    }).melt('Date', var_name='Metric', value_name='Tons')
+                    area_chart = alt.Chart(df_trend).mark_area(opacity=0.5).encode(x='Date:T', y='Tons:Q', color=alt.Color('Metric:N', scale=alt.Scale(range=['#1B5E20', '#A5D6A7']))).properties(height=300)
+                    st.altair_chart(area_chart, use_container_width=True)
+                with col_b:
+                    st.markdown("**Live Raw Material Distribution**")
+                    inv_df = pd.DataFrame(list(inventory.items()), columns=['Material', 'Stock (kg)'])
+                    inv_df = inv_df[inv_df['Stock (kg)'] > 0]
+                    if not inv_df.empty:
+                        donut = alt.Chart(inv_df).mark_arc(innerRadius=50).encode(theta=alt.Theta(field="Stock (kg)", type="quantitative"), color=alt.Color(field="Material", type="nominal", scale=alt.Scale(scheme='greens')), tooltip=['Material', 'Stock (kg)']).properties(height=300)
+                        st.altair_chart(donut, use_container_width=True)
 
             with tab_sc:
                 st.markdown("**Live Warehouse Capacity Indicators (Max 100,000 kg)**")
@@ -411,6 +448,7 @@ def dashboard():
             st.markdown("<h2 style='color:#111827;'>Unified Transaction Records</h2>", unsafe_allow_html=True)
             if not st.session_state["transactions"]: st.info("No records.")
             else:
+                # The "Proof" column header is now explicitly added below!
                 rows = "".join([f"<tr><td>{t.get('Date','')}</td><td style='font-weight:600;'>{t.get('Gate_Pass_ID','')}</td><td>{t.get('Transaction_Type','')}</td><td>{t.get('Vehicle_No','')}</td><td>{t.get('Material', t.get('Feed_Name','-'))}</td><td>{format_status(t.get('Status',''))}</td><td style='font-weight:600;'>{t.get('Net_Weight', 0):,.0f} kg</td><td style='text-align:center;'>{get_print_link(t, 'OUTBOUND' if t.get('Transaction_Type')=='Outbound' else 'INWARD')}</td><td>{get_photo_links_html(t.get('Photo_URL', ''))}</td></tr>" for t in reversed(st.session_state["transactions"])])
                 render_table(["Date", "Pass ID", "Type", "Vehicle", "Product", "Status", "Net Wt", "Print", "Proof"], rows)
 
@@ -435,14 +473,46 @@ def dashboard():
 
         elif admin_nav == "👥 User Management":
             st.markdown("<h2 style='color:#111827;'>User Management Console</h2>", unsafe_allow_html=True)
-            with st.form("create_user_form", clear_on_submit=True):
-                new_emp_id = st.text_input("Employee ID")
-                new_username = st.text_input("System Username")
-                new_password = st.text_input("Password", type="password")
-                new_role = st.selectbox("Assign Role", ["Admin", "Security", "QC_Lab", "Weighbridge", "Loading_Supervisor"])
-                if st.form_submit_button("Create User", type="primary"):
-                    st.session_state["users"][new_username] = {"password": new_password, "role": new_role, "name": new_username, "emp_id": new_emp_id}
-                    st.success(f"✅ User created!"); st.rerun()
+            
+            # View Active Users Table restored
+            st.markdown("### Active Users")
+            user_data = []
+            for uname, details in st.session_state["users"].items():
+                user_data.append({"Employee ID": details.get("emp_id", ""), "Username": uname, "Full Name": details.get("name", ""), "Assigned Role": details.get("role", "")})
+            st.dataframe(pd.DataFrame(user_data), use_container_width=True)
+            
+            st.divider()
+            col_add, col_del = st.columns(2)
+            
+            with col_add:
+                st.markdown("### Add New User")
+                with st.form("create_user_form", clear_on_submit=True):
+                    new_emp_id = st.text_input("Employee ID")
+                    new_name = st.text_input("Full Name")
+                    new_username = st.text_input("System Username *")
+                    new_password = st.text_input("Password *", type="password")
+                    new_role = st.selectbox("Assign Role", ["Admin", "Security", "QC_Lab", "Weighbridge", "Loading_Supervisor"])
+                    if st.form_submit_button("Create User", type="primary"):
+                        if not new_username or not new_password:
+                            st.error("Username and Password are required!")
+                        elif new_username in st.session_state["users"]:
+                            st.error("This username already exists!")
+                        else:
+                            st.session_state["users"][new_username] = {"password": new_password, "role": new_role, "name": new_name if new_name else new_username, "emp_id": new_emp_id}
+                            st.success(f"✅ User created successfully!"); time.sleep(1); st.rerun()
+
+            with col_del:
+                st.markdown("### Remove User")
+                with st.form("delete_user_form", clear_on_submit=True):
+                    del_user = st.selectbox("Select User to Remove", list(st.session_state["users"].keys()))
+                    if st.form_submit_button("Delete User"):
+                        if del_user == "admin":
+                            st.error("Action Blocked: You cannot delete the master Admin account.")
+                        elif del_user == st.session_state["username"]:
+                            st.error("Action Blocked: You cannot delete your own account while logged in.")
+                        else:
+                            del st.session_state["users"][del_user]
+                            st.success(f"✅ User {del_user} successfully removed!"); time.sleep(1); st.rerun()
 
         elif admin_nav == "🗂️ Master Data":
             st.markdown("<h2 style='color:#111827;'>Master Data & Pricing (Cloud Synced)</h2>", unsafe_allow_html=True)

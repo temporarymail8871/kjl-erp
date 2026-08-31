@@ -116,8 +116,8 @@ if "users" not in st.session_state:
         "admin": {"password": "123", "role": "Admin", "name": "Durga Prasad P.", "emp_id": "KJL-001"},
         "sec": {"password": "123", "role": "Security", "name": "Gate Guard", "emp_id": "KJL-002"},
         "lab": {"password": "123", "role": "QC_Lab", "name": "Lab Tech", "emp_id": "KJL-003"},
-        "loa": {"password": "123", "role": "Loading", "name": "Loading Sup", "emp_id": "KJL-005"},
-        "wb": {"password": "123", "role": "Weighbridge", "name": "Scale Operator", "emp_id": "KJL-004"}
+        "wb": {"password": "123", "role": "Weighbridge", "name": "Scale Operator", "emp_id": "KJL-004"},
+        "loading": {"password": "123", "role": "Loading_Supervisor", "name": "Loading Team", "emp_id": "KJL-005"}
     }
 
 LOGO_FILE = "Logo png.png"
@@ -248,6 +248,7 @@ def login():
 # --- DASHBOARD ROUTER ---
 def dashboard():
     role = st.session_state["role"]
+    inventory, finished_goods = calculate_inventory()
     
     if os.path.exists(LOGO_FILE):
         with open(LOGO_FILE, "rb") as img_file:
@@ -261,7 +262,6 @@ def dashboard():
     if role == "Admin":
         st.sidebar.markdown("<br><p style='color:#6B7280; font-size:12px; font-weight:bold; margin-bottom:5px; text-transform:uppercase;'>General Menu</p>", unsafe_allow_html=True)
         admin_nav = st.sidebar.radio("Navigation", ["📊 Dashboard Overview", "🏭 Feed Production", "🚚 Feed Dispatch & Loading", "📦 Warehouse & Stock", "📜 Transaction Records", "👥 User Management", "🗂️ Master Data"], label_visibility="collapsed")
-        inventory, finished_goods = calculate_inventory()
 
         if admin_nav == "📊 Dashboard Overview":
             st.markdown("<h2 style='color:#111827;'>Operations Dashboard</h2>", unsafe_allow_html=True)
@@ -361,7 +361,6 @@ def dashboard():
                 with st.form("loading_form", clear_on_submit=False):
                     c1, c2, c3 = st.columns(3)
                     
-                    # Default the feed type to whatever Security selected if it exists
                     default_feed = t_load.get("Material", "FEED")
                     feed_idx = st.session_state["feed_names"].index(default_feed) if default_feed in st.session_state["feed_names"] else 0
                     
@@ -420,7 +419,7 @@ def dashboard():
                 new_emp_id = st.text_input("Employee ID")
                 new_username = st.text_input("System Username")
                 new_password = st.text_input("Password", type="password")
-                new_role = st.selectbox("Assign Role", ["Admin", "Security", "QC_Lab", "Weighbridge"])
+                new_role = st.selectbox("Assign Role", ["Admin", "Security", "QC_Lab", "Weighbridge", "Loading_Supervisor"])
                 if st.form_submit_button("Create User", type="primary"):
                     st.session_state["users"][new_username] = {"password": new_password, "role": new_role, "name": new_username, "emp_id": new_emp_id}
                     st.success(f"✅ User created!"); st.rerun()
@@ -469,6 +468,57 @@ def dashboard():
                                 st.session_state["formula_reset_key"] += 1
                                 st.success("✅ Formula saved to cloud!"); time.sleep(1); st.rerun()
                     else: st.error(f"Total: {total_kg:,.0f} / 1,000 kg")
+
+# --- LOADING SUPERVISOR DEDICATED PANEL ---
+    elif role == "Loading_Supervisor":
+        st.markdown("<h2 style='color:#111827;'>Loading Supervisor Desk</h2>", unsafe_allow_html=True)
+            
+        st.markdown("<p style='font-weight:600; color:#374151;'>Current Finished Feed Inventory (Tons)</p>", unsafe_allow_html=True)
+        if not finished_goods: st.info("No finished goods in inventory.")
+        else:
+            fg_cols = st.columns(max(1, len(finished_goods)))
+            for idx, (feed, qty) in enumerate(finished_goods.items()):
+                fg_cols[idx % len(fg_cols)].metric(label=f"{feed}", value=f"{qty:,.2f} Tons")
+        st.divider()
+
+        pending_load = [t for t in st.session_state["transactions"] if t.get("Status") == "Loading" and t.get("Transaction_Type") == "Outbound"]
+        if not pending_load:
+            st.success("🎉 No trucks currently waiting for loading!")
+        else:
+            st.markdown("<p style='font-weight:600; color:#DC2626;'>🚨 Action Required: Load Vehicles</p>", unsafe_allow_html=True)
+            load_gp = st.selectbox("Select Empty Vehicle to Load", [format_vehicle_label(t) for t in pending_load]).split(" - ")[0]
+            t_load = next((t for t in pending_load if t.get("Gate_Pass_ID") == load_gp), None)
+            
+            st.info(f"🚚 Empty Tare Weight Confirmed: **{t_load.get('Tare_Weight', 0)} kg**")
+            
+            with st.form("loading_form_dedicated", clear_on_submit=False):
+                c1, c2, c3 = st.columns(3)
+                
+                default_feed = t_load.get("Material", "FEED")
+                feed_idx = st.session_state["feed_names"].index(default_feed) if default_feed in st.session_state["feed_names"] else 0
+                
+                with c1: feed_type = st.selectbox("Feed Being Loaded", st.session_state["feed_names"], index=feed_idx if st.session_state["feed_names"] else 0)
+                with c2: dest = st.selectbox("Destination", st.session_state["locations"])
+                with c3: bags = st.number_input("Total Bags Loaded", min_value=1, step=1)
+                
+                st.markdown("**Photographic Proof (Required)**")
+                cam_photo = st.camera_input("Take Photo of Fully Loaded Truck 📸")
+                
+                if st.form_submit_button("Complete Loading & Send to Final Weighbridge", type="primary"):
+                    if not cam_photo:
+                        st.error("⚠️ You must capture a photo of the loaded truck to proceed!")
+                    else:
+                        with st.spinner("Uploading proof securely to the cloud..."):
+                            photo_name = f"{load_gp}_{int(time.time())}.jpg"
+                            photo_url = upload_file_to_supabase(cam_photo.getvalue(), photo_name)
+                            if photo_url:
+                                update_payload = {"Feed_Name": feed_type, "Destination": dest, "Bags": bags, "Photo_URL": photo_url, "Status": "Pending Gross"}
+                                if update_table("transactions", "Gate_Pass_ID", load_gp, update_payload):
+                                    t_load.update(update_payload)
+                                    st.success("✅ Truck loaded, photo securely saved, sent to Weighbridge!")
+                                    time.sleep(1.5); st.rerun()
+                            else:
+                                st.error("❌ Failed to upload photo to Supabase. Check bucket settings.")
 
 # --- GATE SECURITY ---
     elif role == "Security":

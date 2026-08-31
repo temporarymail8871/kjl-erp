@@ -140,7 +140,7 @@ def format_vehicle_label(t):
     if t.get("Transaction_Type", "Inbound") == "Inbound":
         return f"{t.get('Gate_Pass_ID')} - {t.get('Vehicle_No')} ({t.get('Material', '')} from {t.get('Vendor', '')})"
     else:
-        return f"{t.get('Gate_Pass_ID')} - {t.get('Vehicle_No')} (OUTBOUND LOADING)"
+        return f"{t.get('Gate_Pass_ID')} - {t.get('Vehicle_No')} ({t.get('Material', 'FEED')} for {t.get('Vendor', 'KJL')})"
 
 def calculate_inventory():
     inventory = {mat: 50000.0 for mat in st.session_state["materials"]} 
@@ -150,7 +150,7 @@ def calculate_inventory():
             if t.get("Transaction_Type", "Inbound") == "Inbound" and t.get("Material") in inventory: 
                 inventory[t["Material"]] += t.get("Net_Weight", 0)
             elif t.get("Transaction_Type") == "Outbound" and t.get("Feed_Name") in finished_goods:
-                finished_goods[t["Feed_Name"]] -= (t.get("Net_Weight", 0) / 1000.0) # Deduct tons
+                finished_goods[t["Feed_Name"]] -= (t.get("Net_Weight", 0) / 1000.0) 
     for p in st.session_state["production"]:
         form = p.get("Formula", "")
         if form in st.session_state["bom"]:
@@ -178,7 +178,7 @@ def get_print_link(data_dict, doc_type="PROD"):
     elif doc_type == "INWARD":
         html = f"""<!DOCTYPE html><html><body onload="window.print()" style="font-family: monospace; padding: 20px;"><div style="border: 2px dashed #333; padding: 30px; max-width: 400px; margin: 0 auto;">{logo_img_tag}<h2 style="text-align: center; margin-top: 0;">KJL POULTRIES PVT LTD</h2><h3 style="text-align: center;">INWARD SLIP</h3><hr><p><b>Pass:</b> {data_dict.get('Gate_Pass_ID', '')} | <b>Date:</b> {data_dict.get('Date', '')}</p><p><b>Vehicle:</b> {data_dict.get('Vehicle_No', '')} | <b>Vendor:</b> {data_dict.get('Vendor', '')}</p><p><b>Material:</b> {data_dict.get('Material', '')}</p><hr><p style="font-size: 18px;"><b>NET WT: {data_dict.get('Net_Weight', 0)} kg</b></p></div></body></html>"""
     else:
-        html = f"""<!DOCTYPE html><html><body onload="window.print()" style="font-family: monospace; padding: 20px;"><div style="border: 2px dashed #333; padding: 30px; max-width: 400px; margin: 0 auto;">{logo_img_tag}<h2 style="text-align: center; margin-top: 0;">KJL POULTRIES PVT LTD</h2><h3 style="text-align: center;">DELIVERY CHALLAN</h3><hr><p><b>ID:</b> {data_dict.get('Gate_Pass_ID', '')} | <b>Date:</b> {data_dict.get('Date', '')}</p><p><b>Vehicle:</b> {data_dict.get('Vehicle_No', '')} | <b>Dest:</b> {data_dict.get('Destination', '')}</p><hr><p><b>Feed:</b> {data_dict.get('Feed_Name', '')}</p><p style="font-size: 18px;"><b>BAGS: {data_dict.get('Bags', 0)}</b></p><p style="font-size: 18px;"><b>NET WT: {data_dict.get('Net_Weight', 0)} kg</b></p></div></body></html>"""
+        html = f"""<!DOCTYPE html><html><body onload="window.print()" style="font-family: monospace; padding: 20px;"><div style="border: 2px dashed #333; padding: 30px; max-width: 400px; margin: 0 auto;">{logo_img_tag}<h2 style="text-align: center; margin-top: 0;">KJL POULTRIES PVT LTD</h2><h3 style="text-align: center;">DELIVERY CHALLAN</h3><hr><p><b>ID:</b> {data_dict.get('Gate_Pass_ID', '')} | <b>Date:</b> {data_dict.get('Date', '')}</p><p><b>Vehicle:</b> {data_dict.get('Vehicle_No', '')} | <b>Dest:</b> {data_dict.get('Vendor', '')}</p><hr><p><b>Feed:</b> {data_dict.get('Feed_Name', '')}</p><p style="font-size: 18px;"><b>BAGS: {data_dict.get('Bags', 0)}</b></p><p style="font-size: 18px;"><b>NET WT: {data_dict.get('Net_Weight', 0)} kg</b></p></div></body></html>"""
     b64 = base64.b64encode(html.encode()).decode()
     return f'<a href="data:text/html;base64,{b64}" target="_blank" style="text-decoration: none; font-size: 18px; filter: grayscale(100%);" title="Print in New Tab">🖨️</a>'
 
@@ -359,7 +359,12 @@ def dashboard():
                 
                 with st.form("loading_form", clear_on_submit=False):
                     c1, c2, c3 = st.columns(3)
-                    with c1: feed_type = st.selectbox("Feed Being Loaded", st.session_state["feed_names"])
+                    
+                    # Default the feed type to whatever Security selected if it exists
+                    default_feed = t_load.get("Material", "FEED")
+                    feed_idx = st.session_state["feed_names"].index(default_feed) if default_feed in st.session_state["feed_names"] else 0
+                    
+                    with c1: feed_type = st.selectbox("Feed Being Loaded", st.session_state["feed_names"], index=feed_idx if st.session_state["feed_names"] else 0)
                     with c2: dest = st.selectbox("Destination", st.session_state["locations"])
                     with c3: bags = st.number_input("Total Bags Loaded", min_value=1, step=1)
                     
@@ -474,10 +479,16 @@ def dashboard():
             
             with st.form("vehicle_entry_form", clear_on_submit=True):
                 vehicle_no = st.text_input("Vehicle Number *")
+                
                 if "Inbound" in direction:
                     material = st.selectbox("Material Delivering", st.session_state["materials"])
                     vendor = st.selectbox("Vendor Name", st.session_state["vendors"])
                 else:
+                    out_mats = ["FEED"] + [x for x in st.session_state["feed_names"] if x != "FEED"]
+                    out_parties = ["KJL"] + [x for x in st.session_state["vendors"] + st.session_state["locations"] if x != "KJL"]
+                    
+                    material = st.selectbox("Material Type", out_mats)
+                    vendor = st.selectbox("Party / Vendor Name", out_parties)
                     st.info("Outbound empty trucks go directly to Weighbridge for Tare Weight. Bypassing QC.")
                     
                 if st.form_submit_button("Register Vehicle Arrival", type="primary") and vehicle_no:
@@ -487,7 +498,7 @@ def dashboard():
                     if "Inbound" in direction:
                         new_data = {"Gate_Pass_ID": f"GP-{next_gp_num}", "Date": now_ist.strftime("%d-%m-%Y"), "Time": now_ist.strftime("%I:%M %p"), "Vehicle_No": vehicle_no.upper(), "Transaction_Type": "Inbound", "Material": material, "Vendor": vendor, "Status": "Pending QC"}
                     else:
-                        new_data = {"Gate_Pass_ID": f"GP-{next_gp_num}", "Date": now_ist.strftime("%d-%m-%Y"), "Time": now_ist.strftime("%I:%M %p"), "Vehicle_No": vehicle_no.upper(), "Transaction_Type": "Outbound", "Status": "Pending Tare"}
+                        new_data = {"Gate_Pass_ID": f"GP-{next_gp_num}", "Date": now_ist.strftime("%d-%m-%Y"), "Time": now_ist.strftime("%I:%M %p"), "Vehicle_No": vehicle_no.upper(), "Transaction_Type": "Outbound", "Material": material, "Vendor": vendor, "Status": "Pending Tare"}
                         
                     if insert_table("transactions", new_data):
                         st.session_state["transactions"].append(new_data)

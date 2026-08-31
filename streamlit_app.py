@@ -23,7 +23,6 @@ st.markdown("""
     [data-testid="stMetricLabel"] { font-size: 13px; font-weight: 600; color: #6B7280; text-transform: uppercase; letter-spacing: 0.5px;}
     [data-testid="stMetricDelta"] svg { display: none; }
     
-    /* MODIFIED: overflow-x: auto adds a horizontal scrollbar for smaller screens */
     .custom-table-container { background-color: #FFFFFF; border-radius: 12px; border: 1px solid #E5E7EB; overflow-x: auto; box-shadow: 0 1px 3px rgba(0,0,0,0.05); margin-bottom: 20px;}
     .custom-table { width: 100%; border-collapse: collapse; font-family: 'Segoe UI', sans-serif; font-size: 14px; color: #374151; }
     .custom-table th { background-color: #FFFFFF; color: #6B7280; padding: 16px 24px; text-align: left; font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid #E5E7EB; white-space: nowrap;}
@@ -208,9 +207,10 @@ def view_photos_dialog(gp_id):
     st.markdown(f"**Gate Pass:** {gp_id} | **Vehicle:** {t_record.get('Vehicle_No', '')} | **Product:** {t_record.get('Feed_Name', '')}")
     urls = t_record["Photo_URL"].split(",")
     for i, url in enumerate(urls):
-        st.markdown(f"**Image {i+1}**")
-        st.image(url, use_column_width=True)
-        st.divider()
+        if url.strip():
+            st.markdown(f"**Image {i+1}**")
+            st.image(url.strip(), use_container_width=True)
+            st.divider()
 
 @st.dialog("✏️ Edit Gate Pass / Transaction", width="large")
 def edit_transaction_dialog(gp_id):
@@ -231,10 +231,7 @@ def edit_transaction_dialog(gp_id):
         
         # Recalculate Net Weight if both exist
         if new_gross > 0 and new_tare > 0:
-            if t_edit.get("Transaction_Type") == "Inbound":
-                update_payload["Net_Weight"] = new_gross - new_tare
-            else:
-                update_payload["Net_Weight"] = new_gross - new_tare
+            update_payload["Net_Weight"] = new_gross - new_tare
                 
         if update_table("transactions", "Gate_Pass_ID", gp_id, update_payload):
             t_edit.update(update_payload); st.rerun()
@@ -477,7 +474,6 @@ def dashboard():
                     if st.button("Open Edit Panel"):
                         edit_transaction_dialog(gp_edit_sel)
             with col_f3:
-                # NEW NATIVE PHOTO GALLERY BUTTON
                 with st.expander("📸 View Truck Photos"):
                     photos_tx = [t for t in reversed(st.session_state["transactions"]) if t.get("Photo_URL")]
                     if not photos_tx:
@@ -747,7 +743,10 @@ def dashboard():
                 t_gross = next(t for t in pending_gross if t.get("Gate_Pass_ID") == gp_gross)
                 
                 with st.form("gross_form", clear_on_submit=True):
+                    if t_gross.get("Transaction_Type") == "Outbound":
+                        st.markdown(f"**Empty Tare Weight was:** {t_gross.get('Tare_Weight',0)} kg")
                     gross_wt = st.number_input("Gross Weight (kg)", min_value=0.0, step=10.0)
+                    
                     if st.form_submit_button("Save Gross Weight", type="primary") and gross_wt > 0:
                         gross_time_str = get_ist_now().strftime("%I:%M %p")
                         update_payload = {"Gross_Weight": gross_wt, "Gross_Time": gross_time_str}
@@ -772,7 +771,10 @@ def dashboard():
                 t_tare = next(t for t in pending_tare if t.get("Gate_Pass_ID") == gp_tare)
                 
                 with st.form("tare_form", clear_on_submit=True):
+                    if t_tare.get("Transaction_Type", "Inbound") == "Inbound":
+                        st.markdown(f"**Loaded Gross Weight was:** {t_tare.get('Gross_Weight',0)} kg")
                     tare_wt = st.number_input("Tare Weight (kg)", min_value=0.0, step=10.0)
+                    
                     if st.form_submit_button("Save Tare Weight", type="primary") and tare_wt > 0:
                         tare_time_str = get_ist_now().strftime("%I:%M %p")
                         update_payload = {"Tare_Weight": tare_wt, "Tare_Time": tare_time_str}

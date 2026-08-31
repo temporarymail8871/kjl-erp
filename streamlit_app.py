@@ -78,9 +78,9 @@ def fetch_table(table_name):
 def insert_table(table_name, payload): return _db_call("POST", table_name, payload) is not None
 def update_table(table_name, pk_col, pk_val, payload): return _db_call("PATCH", f"{table_name}?{pk_col}=eq.{pk_val}", payload) is not None
 
-def upload_file_to_supabase(file_bytes, filename):
+def upload_file_to_supabase(file_bytes, filename, content_type):
     url = f"{STORAGE_URL}/{filename}"
-    headers = {"apikey": DB_KEY, "Authorization": f"Bearer {DB_KEY}", "Content-Type": "image/jpeg"}
+    headers = {"apikey": DB_KEY, "Authorization": f"Bearer {DB_KEY}", "Content-Type": content_type}
     res = requests.post(url, headers=headers, data=file_bytes)
     if res.status_code == 200:
         return f"https://ejbgjfhdotsgpivkvics.supabase.co/storage/v1/object/public/dispatch_photos/{filename}"
@@ -389,8 +389,11 @@ def dashboard():
                             with st.spinner(f"Securely uploading {len(uploaded_photos)} photo(s) to the cloud..."):
                                 photo_urls = []
                                 for i, photo_file in enumerate(uploaded_photos):
-                                    photo_name = f"{load_gp}_{int(time.time())}_{i}.jpg"
-                                    p_url = upload_file_to_supabase(photo_file.getvalue(), photo_name)
+                                    ext = photo_file.name.split('.')[-1].lower()
+                                    content_type = f"image/{ext}" if ext in ['png', 'jpeg', 'jpg'] else "image/jpeg"
+                                    photo_name = f"{load_gp}_{int(time.time())}_{i}.{ext}"
+                                    
+                                    p_url = upload_file_to_supabase(photo_file.getvalue(), photo_name, content_type)
                                     if p_url:
                                         photo_urls.append(p_url)
                                 
@@ -402,7 +405,7 @@ def dashboard():
                                         st.success("✅ Truck loaded, photos securely saved, sent to Weighbridge!")
                                         time.sleep(1.5); st.rerun()
                                 else:
-                                    st.error("❌ Failed to upload photos to Supabase. Check bucket settings.")
+                                    st.error("❌ Failed to upload photos to Supabase. Make sure you ran the SQL policy.")
 
         elif admin_nav == "📜 Transaction Records":
             st.markdown("<h2 style='color:#111827;'>Unified Transaction Records</h2>", unsafe_allow_html=True)
@@ -530,8 +533,11 @@ def dashboard():
                         with st.spinner(f"Securely uploading {len(uploaded_photos)} photo(s) to the cloud..."):
                             photo_urls = []
                             for i, photo_file in enumerate(uploaded_photos):
-                                photo_name = f"{load_gp}_{int(time.time())}_{i}.jpg"
-                                p_url = upload_file_to_supabase(photo_file.getvalue(), photo_name)
+                                ext = photo_file.name.split('.')[-1].lower()
+                                content_type = f"image/{ext}" if ext in ['png', 'jpeg', 'jpg'] else "image/jpeg"
+                                photo_name = f"{load_gp}_{int(time.time())}_{i}.{ext}"
+                                
+                                p_url = upload_file_to_supabase(photo_file.getvalue(), photo_name, content_type)
                                 if p_url:
                                     photo_urls.append(p_url)
                             
@@ -543,7 +549,7 @@ def dashboard():
                                     st.success("✅ Truck loaded, photos securely saved, sent to Weighbridge!")
                                     time.sleep(1.5); st.rerun()
                             else:
-                                st.error("❌ Failed to upload photos to Supabase. Check bucket settings.")
+                                st.error("❌ Failed to upload photos to Supabase. Make sure you ran the SQL policy.")
 
 # --- GATE SECURITY ---
     elif role == "Security":

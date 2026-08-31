@@ -11,7 +11,7 @@ import time
 # --- PAGE CONFIGURATION ---
 st.set_page_config(page_title="KJL Poultries Pvt Ltd", page_icon="Logo png.png", layout="wide", initial_sidebar_state="expanded")
 
-# --- CUSTOM CSS (MODERN SAAS UI & CUSTOM STATUS COLORS) ---
+# --- CUSTOM CSS ---
 st.markdown("""
 <style>
     .stApp { background-color: #F8F9FA; }
@@ -31,7 +31,6 @@ st.markdown("""
     .custom-table tr:last-child td { border-bottom: none; }
     .custom-table tr:hover { background-color: #F9FAFB; }
     
-    /* Dynamic Color Status Badges */
     .status-blue { color: #2563EB; font-weight: 600; display: inline-flex; align-items: center; gap: 8px; }
     .status-blue::before { content: ''; width: 8px; height: 8px; background-color: #2563EB; border-radius: 50%; }
     .status-green { color: #16A34A; font-weight: 600; display: inline-flex; align-items: center; gap: 8px; }
@@ -43,15 +42,13 @@ st.markdown("""
     .status-dark { color: #4B5563; font-weight: 600; display: inline-flex; align-items: center; gap: 8px; }
     .status-dark::before { content: ''; width: 8px; height: 8px; background-color: #4B5563; border-radius: 50%; }
     
-    div[data-testid="stVerticalBlock"] > div { margin-bottom: -5px; }
-    .dense-label { font-size: 13px; font-weight: 600; color: #374151; margin-top: 10px; }
-    .req { color: #DC2626; }
     .blue-header { background-color: #1B5E20; color: white; text-align: center; font-weight: bold; padding: 8px; font-size: 14px; margin-top: 15px; margin-bottom: 10px; border-radius: 6px; }
 </style>
 """, unsafe_allow_html=True)
 
 # --- CLOUD DATABASE ENGINE (REQUESTS API) ---
 DB_URL = "https://ejbgjfhdotsgpivkvics.supabase.co/rest/v1"
+STORAGE_URL = "https://ejbgjfhdotsgpivkvics.supabase.co/storage/v1/object/dispatch_photos"
 DB_KEY = "sb_publishable_YtTVgVdC4vn7qEOCDyrUeA_1rFwzHkt"
 DB_HEADERS = {
     "apikey": DB_KEY,
@@ -63,13 +60,9 @@ DB_HEADERS = {
 def _db_call(method, endpoint, payload=None):
     url = f"{DB_URL}/{endpoint}"
     try:
-        if method == "GET":
-            response = requests.get(url, headers=DB_HEADERS)
-        elif method == "POST":
-            response = requests.post(url, headers=DB_HEADERS, json=payload)
-        elif method == "PATCH":
-            response = requests.patch(url, headers=DB_HEADERS, json=payload)
-            
+        if method == "GET": response = requests.get(url, headers=DB_HEADERS)
+        elif method == "POST": response = requests.post(url, headers=DB_HEADERS, json=payload)
+        elif method == "PATCH": response = requests.patch(url, headers=DB_HEADERS, json=payload)
         if response.status_code >= 400:
             st.error(f"Database Error {response.status_code}: {response.text}")
             return None
@@ -82,22 +75,23 @@ def fetch_table(table_name):
     data = _db_call("GET", f"{table_name}?select=*")
     return data if isinstance(data, list) else []
 
-def insert_table(table_name, payload): 
-    res = _db_call("POST", table_name, payload)
-    return res is not None
+def insert_table(table_name, payload): return _db_call("POST", table_name, payload) is not None
+def update_table(table_name, pk_col, pk_val, payload): return _db_call("PATCH", f"{table_name}?{pk_col}=eq.{pk_val}", payload) is not None
 
-def update_table(table_name, pk_col, pk_val, payload): 
-    res = _db_call("PATCH", f"{table_name}?{pk_col}=eq.{pk_val}", payload)
-    return res is not None
+def upload_file_to_supabase(file_bytes, filename):
+    url = f"{STORAGE_URL}/{filename}"
+    headers = {"apikey": DB_KEY, "Authorization": f"Bearer {DB_KEY}", "Content-Type": "image/jpeg"}
+    res = requests.post(url, headers=headers, data=file_bytes)
+    if res.status_code == 200:
+        return f"https://ejbgjfhdotsgpivkvics.supabase.co/storage/v1/object/public/dispatch_photos/{filename}"
+    return None
 
 # --- INITIALIZE APP STATE & SYNC DATABASE ---
 if "db_synced" not in st.session_state:
     st.session_state["transactions"] = fetch_table("transactions")
     st.session_state["production"] = fetch_table("production")
-    st.session_state["dispatches"] = fetch_table("dispatches")
     st.session_state["adjustments"] = fetch_table("adjustments")
     
-    # Fetching live master data
     mats_db = fetch_table("materials")
     st.session_state["materials"] = [m["Name"] for m in mats_db] if mats_db else []
     st.session_state["material_costs"] = {m["Name"]: float(m["Cost"]) for m in mats_db} if mats_db else {}
@@ -138,18 +132,25 @@ def get_next_id(data_list, id_key):
         val = item.get(id_key, "")
         try:
             num = int(val.split("-")[-1])
-            if num > max_id: 
-                max_id = num
-        except: 
-            pass
+            if num > max_id: max_id = num
+        except: pass
     return max_id + 1
+
+def format_vehicle_label(t):
+    if t.get("Transaction_Type", "Inbound") == "Inbound":
+        return f"{t.get('Gate_Pass_ID')} - {t.get('Vehicle_No')} ({t.get('Material', '')} from {t.get('Vendor', '')})"
+    else:
+        return f"{t.get('Gate_Pass_ID')} - {t.get('Vehicle_No')} (OUTBOUND LOADING)"
 
 def calculate_inventory():
     inventory = {mat: 50000.0 for mat in st.session_state["materials"]} 
     finished_goods = {feed: 0.0 for feed in st.session_state["feed_names"]}
     for t in st.session_state["transactions"]:
-        if t.get("Status") == "Completed" and "Net_Weight" in t and t.get("Material") in inventory: 
-            inventory[t["Material"]] += t.get("Net_Weight", 0)
+        if t.get("Status") == "Completed" and "Net_Weight" in t:
+            if t.get("Transaction_Type", "Inbound") == "Inbound" and t.get("Material") in inventory: 
+                inventory[t["Material"]] += t.get("Net_Weight", 0)
+            elif t.get("Transaction_Type") == "Outbound" and t.get("Feed_Name") in finished_goods:
+                finished_goods[t["Feed_Name"]] -= (t.get("Net_Weight", 0) / 1000.0) # Deduct tons
     for p in st.session_state["production"]:
         form = p.get("Formula", "")
         if form in st.session_state["bom"]:
@@ -159,9 +160,6 @@ def calculate_inventory():
                 if mat in inventory: inventory[mat] -= (in_qty * pct)
             feed_n = p.get("Feed_Name", "")
             if feed_n in finished_goods: finished_goods[feed_n] += (p.get("Out_Qty_kg", 0) / 1000)
-    for d in st.session_state["dispatches"]:
-        feed_n = d.get("Feed_Type", "")
-        if feed_n in finished_goods: finished_goods[feed_n] -= d.get("Quantity_Tons", 0)
     for adj in st.session_state["adjustments"]:
         qty = adj["Quantity"] if adj["Type"] == "Addition (+)" else -adj["Quantity"]
         if adj["Item"] in inventory: inventory[adj["Item"]] += qty
@@ -180,7 +178,7 @@ def get_print_link(data_dict, doc_type="PROD"):
     elif doc_type == "INWARD":
         html = f"""<!DOCTYPE html><html><body onload="window.print()" style="font-family: monospace; padding: 20px;"><div style="border: 2px dashed #333; padding: 30px; max-width: 400px; margin: 0 auto;">{logo_img_tag}<h2 style="text-align: center; margin-top: 0;">KJL POULTRIES PVT LTD</h2><h3 style="text-align: center;">INWARD SLIP</h3><hr><p><b>Pass:</b> {data_dict.get('Gate_Pass_ID', '')} | <b>Date:</b> {data_dict.get('Date', '')}</p><p><b>Vehicle:</b> {data_dict.get('Vehicle_No', '')} | <b>Vendor:</b> {data_dict.get('Vendor', '')}</p><p><b>Material:</b> {data_dict.get('Material', '')}</p><hr><p style="font-size: 18px;"><b>NET WT: {data_dict.get('Net_Weight', 0)} kg</b></p></div></body></html>"""
     else:
-        html = f"""<!DOCTYPE html><html><body onload="window.print()" style="font-family: monospace; padding: 20px;"><div style="border: 2px dashed #333; padding: 30px; max-width: 400px; margin: 0 auto;">{logo_img_tag}<h2 style="text-align: center; margin-top: 0;">KJL POULTRIES PVT LTD</h2><h3 style="text-align: center;">DELIVERY CHALLAN</h3><hr><p><b>ID:</b> {data_dict.get('Dispatch_ID', '')} | <b>Date:</b> {data_dict.get('Date', '')}</p><p><b>Vehicle:</b> {data_dict.get('Vehicle_No', '')} | <b>Dest:</b> {data_dict.get('Destination', '')}</p><hr><p><b>Feed:</b> {data_dict.get('Feed_Type', '')}</p><p style="font-size: 18px;"><b>BAGS: {data_dict.get('Bag_Count', 0)}</b></p></div></body></html>"""
+        html = f"""<!DOCTYPE html><html><body onload="window.print()" style="font-family: monospace; padding: 20px;"><div style="border: 2px dashed #333; padding: 30px; max-width: 400px; margin: 0 auto;">{logo_img_tag}<h2 style="text-align: center; margin-top: 0;">KJL POULTRIES PVT LTD</h2><h3 style="text-align: center;">DELIVERY CHALLAN</h3><hr><p><b>ID:</b> {data_dict.get('Gate_Pass_ID', '')} | <b>Date:</b> {data_dict.get('Date', '')}</p><p><b>Vehicle:</b> {data_dict.get('Vehicle_No', '')} | <b>Dest:</b> {data_dict.get('Destination', '')}</p><hr><p><b>Feed:</b> {data_dict.get('Feed_Name', '')}</p><p style="font-size: 18px;"><b>BAGS: {data_dict.get('Bags', 0)}</b></p><p style="font-size: 18px;"><b>NET WT: {data_dict.get('Net_Weight', 0)} kg</b></p></div></body></html>"""
     b64 = base64.b64encode(html.encode()).decode()
     return f'<a href="data:text/html;base64,{b64}" target="_blank" style="text-decoration: none; font-size: 18px; filter: grayscale(100%);" title="Print in New Tab">🖨️</a>'
 
@@ -188,47 +186,31 @@ def render_table(headers, rows_html):
     st.markdown(f"<div class='custom-table-container'><table class='custom-table'><thead><tr>{''.join([f'<th>{h}</th>' for h in headers])}</tr></thead><tbody>{rows_html}</tbody></table></div>", unsafe_allow_html=True)
 
 def format_status(status_text):
-    if status_text == "Pending QC": return f"<span class='status-blue'>{status_text}</span>"
-    elif status_text in ["QC Passed", "QC Passed with Rebate"]: return f"<span class='status-green'>{status_text}</span>"
+    if status_text in ["Pending QC", "Pending Tare"]: return f"<span class='status-blue'>{status_text}</span>"
+    elif status_text in ["QC Passed", "QC Passed with Rebate", "Loading"]: return f"<span class='status-green'>{status_text}</span>"
     elif status_text == "QC Rejected": return f"<span class='status-red'>{status_text}</span>"
-    elif status_text == "Unloading": return f"<span class='status-orange'>{status_text}</span>"
+    elif status_text in ["Unloading", "Pending Gross"]: return f"<span class='status-orange'>{status_text}</span>"
     elif status_text == "Completed": return f"<span class='status-dark'>{status_text}</span>"
     else: return f"<span>{status_text}</span>"
 
 # =====================================================================
 # DRILL-DOWN POP-UP DIALOGS
 # =====================================================================
-@st.dialog("📥 Daily Inbound Details & Audit Trail", width="large")
+@st.dialog("📥 Daily Gate Details & Audit Trail", width="large")
 def view_daily_inbound_dialog(date_str):
     records = [t for t in st.session_state["transactions"] if t.get("Date") == date_str and t.get("Status") == "Completed"]
-    if not records: st.info("No inbound records for today.")
+    if not records: st.info("No records for today.")
     else:
-        rows = "".join([f"<tr><td>{t.get('Time','')}</td><td style='font-weight:600;'>{t.get('Gate_Pass_ID','')}</td><td>{t.get('Vehicle_No','')}</td><td>{t.get('QC_Time','-')}</td><td>{t.get('Gross_Time','-')}</td><td>{t.get('Tare_Time','-')}</td><td style='font-weight:600;'>{t.get('Net_Weight', 0):,.0f} kg</td></tr>" for t in reversed(records)])
-        render_table(["Entry", "Gate Pass", "Vehicle", "QC Check", "Gross Wt", "Tare Wt", "Net Wt"], rows)
+        rows = "".join([f"<tr><td>{t.get('Transaction_Type', 'Inbound')}</td><td style='font-weight:600;'>{t.get('Gate_Pass_ID','')}</td><td>{t.get('Vehicle_No','')}</td><td>{t.get('QC_Time','-')}</td><td>{t.get('Tare_Time','-')}</td><td>{t.get('Gross_Time','-')}</td><td style='font-weight:600;'>{t.get('Net_Weight', 0):,.0f} kg</td></tr>" for t in reversed(records)])
+        render_table(["Type", "Gate Pass", "Vehicle", "QC Check", "Tare Wt", "Gross Wt", "Net Wt"], rows)
 
 @st.dialog("🚛 Active Vehicles in Plant", width="large")
 def view_active_vehicles_dialog(date_str):
     records = [t for t in st.session_state["transactions"] if t.get("Date") == date_str and t.get("Status") not in ["Completed", "QC Rejected"]]
     if not records: st.info("No active vehicles right now.")
     else:
-        rows = "".join([f"<tr><td>{t.get('Time','')}</td><td style='font-weight:600;'>{t.get('Gate_Pass_ID','')}</td><td>{t.get('Vehicle_No','')}</td><td>{t.get('Material','')}</td><td>{format_status(t.get('Status',''))}</td></tr>" for t in reversed(records)])
-        render_table(["Entry Time", "Gate Pass", "Vehicle No", "Material", "Current Status"], rows)
-
-@st.dialog("🏭 Daily Production Details", width="large")
-def view_daily_production_dialog(date_str):
-    records = [p for p in st.session_state["production"] if p.get("Date") == date_str]
-    if not records: st.info("No production records for today.")
-    else:
-        rows = "".join([f"<tr><td style='font-weight:600;'>{p.get('Invoice','')}</td><td>{p.get('Feed_Name','')}</td><td>{p.get('Formula','')}</td><td style='font-weight:600;'>{p.get('Out_Qty_kg',0):,.0f} kg</td><td>{p.get('Bags',0)}</td><td>₹{p.get('Total_Amount',0):,.2f}</td></tr>" for p in reversed(records)])
-        render_table(["Invoice", "Feed", "Formula", "Output", "Bags", "Total Cost"], rows)
-
-@st.dialog("🚚 Daily Dispatch Details", width="large")
-def view_daily_dispatch_dialog(date_str):
-    records = [d for d in st.session_state["dispatches"] if d.get("Date") == date_str]
-    if not records: st.info("No dispatch records for today.")
-    else:
-        rows = "".join([f"<tr><td>{d.get('Time','')}</td><td style='font-weight:600;'>{d.get('Dispatch_ID','')}</td><td>{d.get('Feed_Type','')}</td><td>{d.get('Vehicle_No','')}</td><td style='font-weight:600;'>{d.get('Quantity_Tons', 0)} Tons</td><td>{d.get('Destination','')}</td></tr>" for d in reversed(records)])
-        render_table(["Time", "DC No.", "Feed", "Vehicle", "Quantity", "Destination"], rows)
+        rows = "".join([f"<tr><td>{t.get('Transaction_Type', 'Inbound')}</td><td style='font-weight:600;'>{t.get('Gate_Pass_ID','')}</td><td>{t.get('Vehicle_No','')}</td><td>{t.get('Material', t.get('Feed_Name','-'))}</td><td>{format_status(t.get('Status',''))}</td></tr>" for t in reversed(records)])
+        render_table(["Type", "Gate Pass", "Vehicle No", "Item", "Current Status"], rows)
 
 @st.dialog("✏️ Edit Production Record", width="large")
 def edit_production_dialog(invoice_id):
@@ -238,54 +220,10 @@ def edit_production_dialog(invoice_id):
     new_out_qty = c1.number_input("Final Output Qty (kg)", value=float(curr_rec.get("Out_Qty_kg", 0)))
     new_bags = c2.number_input("Total Bags Packed", value=int(curr_rec.get("Bags", 0)))
     
-    st.markdown("<div class='blue-header'>Update Cost Overheads</div>", unsafe_allow_html=True)
-    e1, e2, e3 = st.columns(3)
-    c_lab = e1.number_input("Labour (₹)", value=float(curr_rec.get("Cost_Lab", 0.0)))
-    c_pac = e2.number_input("Packing (₹)", value=float(curr_rec.get("Cost_Pac", 0.0)))
-    c_ele = e3.number_input("Electrical (₹)", value=float(curr_rec.get("Cost_Ele", 0.0)))
-    e4, e5, e6 = st.columns(3)
-    c_tra = e4.number_input("Transport (₹)", value=float(curr_rec.get("Cost_Tra", 0.0)))
-    c_bag = e5.number_input("Bag Cost (₹)", value=float(curr_rec.get("Cost_Bag", 0.0)))
-    c_oth = e6.number_input("Other (₹)", value=float(curr_rec.get("Cost_Oth", 0.0)))
-    c_jay = st.number_input("KJL Feeds Expense (₹)", value=float(curr_rec.get("Cost_Jay", 0.0)))
-    c_fix = st.number_input("Fixed Cost (₹)", value=float(curr_rec.get("Cost_Fix", 0.0)))
-    
     if st.button("Save Corrections", type="primary", use_container_width=True):
-        plant_expenses = c_lab + c_pac + c_ele + c_tra + c_bag + c_oth + c_jay
-        grand_total = float(curr_rec.get("RM_Cost", 0)) + plant_expenses
-        price_per_kg = grand_total / new_out_qty if new_out_qty > 0 else 0
-        update_payload = {"Out_Qty_kg": new_out_qty, "Bags": new_bags, "Cost_Lab": c_lab, "Cost_Pac": c_pac, "Cost_Ele": c_ele, "Cost_Tra": c_tra, "Cost_Bag": c_bag, "Cost_Oth": c_oth, "Cost_Jay": c_jay, "Cost_Fix": c_fix, "Plant_Expenses": plant_expenses, "Total_Amount": grand_total, "Price_Per_Kg": price_per_kg}
+        update_payload = {"Out_Qty_kg": new_out_qty, "Bags": new_bags}
         if update_table("production", "Invoice", invoice_id, update_payload):
             curr_rec.update(update_payload); st.rerun()
-
-@st.dialog("✏️ Edit Inbound Record")
-def edit_inbound_dialog(gp_id):
-    t_edit = next((item for item in st.session_state["transactions"] if item.get("Gate_Pass_ID") == gp_id), None)
-    if not t_edit: return
-    status_list = ["Pending QC", "QC Passed", "QC Passed with Rebate", "QC Rejected", "Unloading", "Completed"]
-    curr_idx = status_list.index(t_edit['Status']) if t_edit['Status'] in status_list else 0
-    new_status = st.selectbox("Status", status_list, index=curr_idx)
-    new_gross = st.number_input("Gross Weight (kg)", value=float(t_edit.get("Gross_Weight", 0.0)), step=10.0)
-    new_tare = st.number_input("Tare Weight (kg)", value=float(t_edit.get("Tare_Weight", 0.0)), step=10.0)
-    if st.button("Save Gate Pass", type="primary"):
-        update_payload = {"Status": new_status, "Gross_Weight": new_gross, "Tare_Weight": new_tare}
-        if new_gross > 0 and new_tare > 0: update_payload["Net_Weight"] = new_gross - new_tare
-        if update_table("transactions", "Gate_Pass_ID", gp_id, update_payload):
-            t_edit.update(update_payload); st.rerun()
-
-@st.dialog("✏️ Edit Dispatch Record")
-def edit_outbound_dialog(dc_id):
-    d_edit = next((item for item in st.session_state["dispatches"] if item.get("Dispatch_ID") == dc_id), None)
-    if not d_edit: return
-    new_veh = st.text_input("Vehicle Number", value=d_edit.get("Vehicle_No", ""))
-    dest_idx = st.session_state["locations"].index(d_edit["Destination"]) if d_edit["Destination"] in st.session_state["locations"] else 0
-    new_dest = st.selectbox("Destination", st.session_state["locations"], index=dest_idx)
-    new_qty = st.number_input("Quantity (Tons)", value=float(d_edit.get("Quantity_Tons", 0.0)), step=1.0)
-    if st.button("Save Dispatch", type="primary"):
-        bag_size = d_edit.get("Bag_Size", 50)
-        update_payload = {"Vehicle_No": new_veh, "Destination": new_dest, "Quantity_Tons": new_qty, "Quantity_kg": new_qty * 1000, "Bag_Count": int((new_qty * 1000) / bag_size)}
-        if update_table("dispatches", "Dispatch_ID", dc_id, update_payload):
-            d_edit.update(update_payload); st.rerun()
 
 # --- LOGIN ---
 def login():
@@ -313,9 +251,7 @@ def dashboard():
     if os.path.exists(LOGO_FILE):
         with open(LOGO_FILE, "rb") as img_file:
             b64_logo = base64.b64encode(img_file.read()).decode()
-        st.sidebar.markdown(f"""<div style="display: flex; align-items: center; gap: 12px; margin-bottom: 20px; margin-top: 10px;"><img src="data:image/png;base64,{b64_logo}" width="45"><h1 style="margin: 0; font-size: 22px; color: #1B5E20 !important;">KJL Poultries Pvt Ltd</h1></div>""", unsafe_allow_html=True)
-    else:
-        st.sidebar.markdown(f"<h1>KJL Poultries Pvt Ltd</h1>", unsafe_allow_html=True)
+        st.sidebar.markdown(f"""<div style="display: flex; align-items: center; gap: 12px; margin-bottom: 20px; margin-top: 10px;"><img src="data:image/png;base64,{b64_logo}" width="45"><h1 style="margin: 0; font-size: 22px; color: #1B5E20 !important;">KJL Poultries</h1></div>""", unsafe_allow_html=True)
         
     st.sidebar.markdown(f"**👤 {st.session_state['users'][st.session_state['username']]['name']}**")
     if st.sidebar.button("🚪 Logout", use_container_width=True):
@@ -323,19 +259,18 @@ def dashboard():
 
     if role == "Admin":
         st.sidebar.markdown("<br><p style='color:#6B7280; font-size:12px; font-weight:bold; margin-bottom:5px; text-transform:uppercase;'>General Menu</p>", unsafe_allow_html=True)
-        admin_nav = st.sidebar.radio("Navigation", ["📊 Dashboard Overview", "🏭 Feed Production", "🚚 Feed Dispatch", "📦 Warehouse & Stock", "📜 Transaction Records", "📑 Reports & Exports", "👥 User Management", "🗂️ Master Data"], label_visibility="collapsed")
+        admin_nav = st.sidebar.radio("Navigation", ["📊 Dashboard Overview", "🏭 Feed Production", "🚚 Feed Dispatch & Loading", "📦 Warehouse & Stock", "📜 Transaction Records", "👥 User Management", "🗂️ Master Data"], label_visibility="collapsed")
         inventory, finished_goods = calculate_inventory()
 
         if admin_nav == "📊 Dashboard Overview":
             st.markdown("<h2 style='color:#111827;'>Operations Dashboard</h2>", unsafe_allow_html=True)
-            tab_ops, tab_fin, tab_sc = st.tabs(["1️⃣ Executive Operations Pulse", "2️⃣ Financial & Costing Hub", "3️⃣ Supply Chain Logistics"])
+            tab_ops, tab_sc = st.tabs(["1️⃣ Executive Operations Pulse", "2️⃣ Supply Chain Logistics"])
             today_str = get_ist_now().strftime("%d-%m-%Y")
             today_tx = [t for t in st.session_state["transactions"] if t.get("Date") == today_str]
-            today_disp = [d for d in st.session_state["dispatches"] if d.get("Date") == today_str]
             today_prod = [p for p in st.session_state["production"] if p.get("Date") == today_str]
             
-            total_qty_in = sum([t.get("Net_Weight", 0) for t in today_tx if t.get("Status") == "Completed"])
-            total_qty_out = sum([d.get("Quantity_Tons", 0) for d in today_disp])
+            total_qty_in = sum([t.get("Net_Weight", 0) for t in today_tx if t.get("Status") == "Completed" and t.get("Transaction_Type") == "Inbound"])
+            total_qty_out = sum([t.get("Net_Weight", 0) for t in today_tx if t.get("Status") == "Completed" and t.get("Transaction_Type") == "Outbound"])
             total_prod = sum([p.get("Out_Qty_kg", 0)/1000 for p in today_prod])
             active_tx = [t for t in today_tx if t.get("Status") not in ["Completed", "QC Rejected"]]
 
@@ -346,35 +281,11 @@ def dashboard():
                     if st.button("🔍 View Details", key="btn_in", use_container_width=True): view_daily_inbound_dialog(today_str)
                 with c2:
                     st.metric("Daily Production (Tons)", f"{total_prod:,.1f}")
-                    if st.button("🔍 View Details", key="btn_pr", use_container_width=True): view_daily_production_dialog(today_str)
                 with c3:
-                    st.metric("Daily Dispatch (Tons)", f"{total_qty_out:,.1f}")
-                    if st.button("🔍 View Details", key="btn_out", use_container_width=True): view_daily_dispatch_dialog(today_str)
+                    st.metric("Daily Outbound (Tons)", f"{total_qty_out/1000:,.1f}")
                 with c4:
                     st.metric("Active Vehicles", len(active_tx))
                     if st.button("🔍 View Details", key="btn_act", use_container_width=True): view_active_vehicles_dialog(today_str)
-                st.divider()
-                col_a, col_b = st.columns([2, 1])
-                with col_a:
-                    st.markdown("**Recent Production vs. Dispatch Trend**")
-                    dates = pd.date_range(end=get_ist_now().date(), periods=7)
-                    df_trend = pd.DataFrame({'Date': dates, 'Produced': [12, 15, 14, 18, total_prod if total_prod>0 else 16, 15, total_prod], 'Dispatched': [10, 14, 12, 15, total_qty_out if total_qty_out>0 else 14, 13, total_qty_out]}).melt('Date', var_name='Metric', value_name='Tons')
-                    area_chart = alt.Chart(df_trend).mark_area(opacity=0.5).encode(x='Date:T', y='Tons:Q', color=alt.Color('Metric:N', scale=alt.Scale(range=['#1B5E20', '#A5D6A7']))).properties(height=300)
-                    st.altair_chart(area_chart, use_container_width=True)
-                with col_b:
-                    st.markdown("**Live Raw Material Distribution**")
-                    inv_df = pd.DataFrame(list(inventory.items()), columns=['Material', 'Stock (kg)'])
-                    inv_df = inv_df[inv_df['Stock (kg)'] > 0]
-                    if not inv_df.empty:
-                        donut = alt.Chart(inv_df).mark_arc(innerRadius=50).encode(theta=alt.Theta(field="Stock (kg)", type="quantitative"), color=alt.Color(field="Material", type="nominal", scale=alt.Scale(scheme='greens')), tooltip=['Material', 'Stock (kg)']).properties(height=300)
-                        st.altair_chart(donut, use_container_width=True)
-
-            with tab_fin:
-                total_inventory_value = sum([qty * st.session_state["material_costs"].get(mat, 0) for mat, qty in inventory.items()])
-                c1, c2, c3 = st.columns(3)
-                c1.metric("Warehouse Asset Value", f"₹ {total_inventory_value:,.2f}")
-                c2.metric("Avg. Production Cost/Kg", f"₹ {sum([p.get('Price_Per_Kg', 0) for p in st.session_state['production']]) / len(st.session_state['production']) if st.session_state['production'] else 0:,.2f}")
-                c3.metric("Live Market Materials", len(st.session_state["materials"]))
                 st.divider()
 
             with tab_sc:
@@ -400,8 +311,8 @@ def dashboard():
                     with c1: sel_inv = st.selectbox("Select Invoice:", [p["Invoice"] for p in reversed(st.session_state["production"])], label_visibility="collapsed")
                     with c2: 
                         if st.button("✏️ Quick Edit", use_container_width=True) and sel_inv: edit_production_dialog(sel_inv)
-                    rows = "".join([f"<tr><td>{p.get('Date','')}</td><td style='font-weight:600;'>{p.get('Invoice','')}</td><td>{p.get('Formula','')}</td><td>{p.get('Feed_Name','')}</td><td>{p.get('In_Qty_kg',0):,.0f}</td><td>{p.get('Out_Qty_kg',0):,.0f}</td><td>{p.get('Bags',0)}</td><td>₹{p.get('Price_Per_Kg',0):.2f}</td><td style='font-weight:600;'>₹{p.get('Total_Amount',0):,.2f}</td><td>{p.get('Location','')}</td><td style='text-align:center;'>{get_print_link(p, 'PROD')}</td></tr>" for p in reversed(st.session_state["production"])])
-                    render_table(["Date", "Invoice", "Formula", "Item", "In Qty", "Out Qty", "Bags", "Price", "Amount", "Location", "Action"], rows)
+                    rows = "".join([f"<tr><td>{p.get('Date','')}</td><td style='font-weight:600;'>{p.get('Invoice','')}</td><td>{p.get('Formula','')}</td><td>{p.get('Feed_Name','')}</td><td>{p.get('In_Qty_kg',0):,.0f}</td><td>{p.get('Out_Qty_kg',0):,.0f}</td><td>{p.get('Bags',0)}</td><td style='text-align:center;'>{get_print_link(p, 'PROD')}</td></tr>" for p in reversed(st.session_state["production"])])
+                    render_table(["Date", "Invoice", "Formula", "Item", "In Qty", "Out Qty", "Bags", "Print"], rows)
 
             with tab_form:
                 c1, c2, c3, c4, c5 = st.columns([1.2, 1, 1.5, 1.5, 1.5])
@@ -413,73 +324,70 @@ def dashboard():
                 p_tons = st.number_input("Tons *", min_value=0.1, step=1.0, value=1.0)
                 
                 prod_kg = p_tons * 1000
-                recipe = st.session_state["bom"].get(p_form, {})
-                rm_total_cost = sum([(prod_kg * pct) * st.session_state["material_costs"].get(mat, 0) for mat, pct in recipe.items()])
-
                 if st.button("✔️ Save Production Record", type="primary"):
                     next_inv_num = get_next_id(st.session_state["production"], "Invoice")
                     new_data = {
                         "Date": p_date.strftime("%d.%m.%Y"),
                         "Invoice": f"FMP-{get_ist_now().strftime('%m%y')}-{next_inv_num}",
                         "Formula": p_form, "Feed_Name": p_feed, "Location": p_loc,
-                        "In_Qty_kg": prod_kg, "Out_Qty_kg": prod_kg, "Bags": int(prod_kg/50), "Bag_Size": 50,
-                        "Cost_Lab": 0, "Cost_Pac": 0, "Cost_Ele": 0, "Cost_Tra": 0, "Cost_Bag": 0, "Cost_Oth": 0, "Cost_Jay": 0, "Cost_Fix": 0,
-                        "Price_Per_Kg": rm_total_cost / prod_kg if prod_kg > 0 else 0, "Total_Amount": rm_total_cost, "RM_Cost": rm_total_cost, "Plant_Expenses": 0
+                        "In_Qty_kg": prod_kg, "Out_Qty_kg": prod_kg, "Bags": int(prod_kg/50)
                     }
                     if insert_table("production", new_data):
                         st.session_state["production"].append(new_data)
-                        st.success("✅ Recorded Successfully!")
-                        time.sleep(1)
-                        st.rerun()
+                        st.success("✅ Recorded Successfully!"); time.sleep(1); st.rerun()
 
-        elif admin_nav == "📜 Transaction Records":
-            st.markdown("<h2 style='color:#111827;'>Transaction Records</h2>", unsafe_allow_html=True)
-            if not st.session_state["transactions"]: st.info("No records.")
-            else:
-                c1, c2, c3 = st.columns([3, 2, 5])
-                with c1: gp_edit = st.selectbox("Select Gate Pass:", [t["Gate_Pass_ID"] for t in reversed(st.session_state["transactions"])], label_visibility="collapsed")
-                with c2: 
-                    if st.button("✏️ Quick Edit", use_container_width=True) and gp_edit: edit_inbound_dialog(gp_edit)
-                rows = "".join([f"<tr><td>{t.get('Date','')}</td><td style='font-weight:600;'>{t.get('Gate_Pass_ID','')}</td><td>{t.get('Material','')}</td><td>{t.get('Vehicle_No','')}</td><td>{format_status(t.get('Status',''))}</td><td style='font-weight:600;'>{t.get('Net_Weight', 0):,.0f} kg</td><td style='text-align:center;'>{get_print_link(t, 'INWARD')}</td></tr>" for t in reversed(st.session_state["transactions"])])
-                render_table(["Date", "Gate Pass", "Material", "Vehicle", "Status", "Net Wt", "Action"], rows)
-
-        elif admin_nav == "🚚 Feed Dispatch":
-            st.markdown("<h2 style='color:#111827;'>Feed Dispatch & Outward</h2>", unsafe_allow_html=True)
-            st.markdown("<p style='font-weight:600; color:#374151;'>Current Feed Inventory (Tons)</p>", unsafe_allow_html=True)
+        elif admin_nav == "🚚 Feed Dispatch & Loading":
+            st.markdown("<h2 style='color:#111827;'>Loading Supervisor Desk</h2>", unsafe_allow_html=True)
+            
+            st.markdown("<p style='font-weight:600; color:#374151;'>Current Finished Feed Inventory (Tons)</p>", unsafe_allow_html=True)
             if not finished_goods: st.info("No finished goods in inventory.")
             else:
                 fg_cols = st.columns(max(1, len(finished_goods)))
                 for idx, (feed, qty) in enumerate(finished_goods.items()):
                     fg_cols[idx % len(fg_cols)].metric(label=f"{feed}", value=f"{qty:,.2f} Tons")
             st.divider()
-            if not st.session_state["feed_names"]: st.warning("⚠️ No Feed Names available to dispatch.")
+
+            pending_load = [t for t in st.session_state["transactions"] if t.get("Status") == "Loading" and t.get("Transaction_Type") == "Outbound"]
+            if not pending_load:
+                st.success("🎉 No trucks currently waiting for loading!")
             else:
-                st.markdown("<p style='font-weight:600; color:#374151;'>Log New Dispatch</p>", unsafe_allow_html=True)
-                with st.form("dispatch_form", clear_on_submit=False):
-                    colA, colB = st.columns(2)
-                    with colA:
-                        disp_date = st.date_input("Dispatch Date", get_ist_now().date())
-                        vehicle_no = st.text_input("Vehicle Number")
-                        destination = st.selectbox("Destination Location", st.session_state["locations"] if st.session_state["locations"] else ["Default Location"])
-                    with colB:
-                        feed_type = st.selectbox("Select Finished Feed", st.session_state["feed_names"])
-                        disp_tons = st.number_input("Quantity to Dispatch (Tons)", min_value=0.1, step=1.0)
-                        bag_type = st.radio("Bag Packing Size", ["70 kg", "50 kg"], horizontal=True)
-                        
-                    if st.form_submit_button("Log Outward Dispatch", type="primary"):
-                        if not vehicle_no: st.error("⚠️ Vehicle Number required.")
-                        elif disp_tons > finished_goods.get(feed_type, 0): st.error(f"⚠️ Insufficient Inventory!")
+                st.markdown("<p style='font-weight:600; color:#DC2626;'>🚨 Action Required: Load Vehicles</p>", unsafe_allow_html=True)
+                load_gp = st.selectbox("Select Empty Vehicle to Load", [format_vehicle_label(t) for t in pending_load]).split(" - ")[0]
+                t_load = next((t for t in pending_load if t.get("Gate_Pass_ID") == load_gp), None)
+                
+                st.info(f"🚚 Empty Tare Weight Confirmed: **{t_load.get('Tare_Weight', 0)} kg**")
+                
+                with st.form("loading_form", clear_on_submit=False):
+                    c1, c2, c3 = st.columns(3)
+                    with c1: feed_type = st.selectbox("Feed Being Loaded", st.session_state["feed_names"])
+                    with c2: dest = st.selectbox("Destination", st.session_state["locations"])
+                    with c3: bags = st.number_input("Total Bags Loaded", min_value=1, step=1)
+                    
+                    st.markdown("**Photographic Proof (Required)**")
+                    cam_photo = st.camera_input("Take Photo of Fully Loaded Truck 📸")
+                    
+                    if st.form_submit_button("Complete Loading & Send to Final Weighbridge", type="primary"):
+                        if not cam_photo:
+                            st.error("⚠️ You must capture a photo of the loaded truck to proceed!")
                         else:
-                            bag_kg = 70 if "70" in bag_type else 50
-                            next_dc_num = get_next_id(st.session_state["dispatches"], "Dispatch_ID")
-                            new_data = {
-                                "Dispatch_ID": f"DC-{next_dc_num}", "Date": disp_date.strftime("%d-%m-%Y"), "Time": get_ist_now().strftime("%I:%M %p"),
-                                "Vehicle_No": vehicle_no.upper(), "Destination": destination, "Feed_Type": feed_type,
-                                "Quantity_Tons": disp_tons, "Quantity_kg": disp_tons * 1000, "Bag_Size": bag_kg, "Bag_Count": int((disp_tons * 1000) / bag_kg)
-                            }
-                            if insert_table("dispatches", new_data):
-                                st.session_state["dispatches"].append(new_data)
-                                st.success("✅ Dispatch logged successfully!"); time.sleep(1); st.rerun()
+                            with st.spinner("Uploading proof securely to the cloud..."):
+                                photo_name = f"{load_gp}_{int(time.time())}.jpg"
+                                photo_url = upload_file_to_supabase(cam_photo.getvalue(), photo_name)
+                                if photo_url:
+                                    update_payload = {"Feed_Name": feed_type, "Destination": dest, "Bags": bags, "Photo_URL": photo_url, "Status": "Pending Gross"}
+                                    if update_table("transactions", "Gate_Pass_ID", load_gp, update_payload):
+                                        t_load.update(update_payload)
+                                        st.success("✅ Truck loaded, photo securely saved, sent to Weighbridge!")
+                                        time.sleep(1.5); st.rerun()
+                                else:
+                                    st.error("❌ Failed to upload photo to Supabase. Check bucket settings.")
+
+        elif admin_nav == "📜 Transaction Records":
+            st.markdown("<h2 style='color:#111827;'>Unified Transaction Records</h2>", unsafe_allow_html=True)
+            if not st.session_state["transactions"]: st.info("No records.")
+            else:
+                rows = "".join([f"<tr><td>{t.get('Date','')}</td><td style='font-weight:600;'>{t.get('Gate_Pass_ID','')}</td><td>{t.get('Transaction_Type','')}</td><td>{t.get('Vehicle_No','')}</td><td>{t.get('Material', t.get('Feed_Name','-'))}</td><td>{format_status(t.get('Status',''))}</td><td style='font-weight:600;'>{t.get('Net_Weight', 0):,.0f} kg</td><td style='text-align:center;'>{get_print_link(t, 'OUTBOUND' if t.get('Transaction_Type')=='Outbound' else 'INWARD')}</td><td><a href='{t.get('Photo_URL', '#')}' target='_blank'>{'📷 View' if t.get('Photo_URL') else '-'}</a></td></tr>" for t in reversed(st.session_state["transactions"])])
+                render_table(["Date", "Pass ID", "Type", "Vehicle", "Product", "Status", "Net Wt", "Print", "Proof"], rows)
 
         elif admin_nav == "📦 Warehouse & Stock":
             st.markdown("<h2 style='color:#111827;'>Warehouse Inventory</h2>", unsafe_allow_html=True)
@@ -493,27 +401,12 @@ def dashboard():
                         adj_type = st.radio("Adjustment Type", ["Deduction (-)", "Addition (+)"])
                         adj_qty = st.number_input("Quantity (kg)", min_value=0.0, step=10.0)
                     with c3:
-                        adj_reason = st.selectbox("Reason", ["Moisture Loss", "Spillage/Wastage", "Audit Correction", "Expired/Damaged"])
+                        adj_reason = st.selectbox("Reason", ["Moisture Loss", "Spillage/Wastage", "Audit Correction"])
                     if st.form_submit_button("Apply Adjustment"):
                         new_data = {"Date": adj_date.strftime("%d-%m-%Y"), "Item": adj_item, "Type": adj_type, "Quantity": adj_qty, "Reason": adj_reason}
                         if insert_table("adjustments", new_data):
                             st.session_state["adjustments"].append(new_data)
-                            st.success("✅ Adjustment applied successfully!"); time.sleep(1); st.rerun()
-
-        elif admin_nav == "📑 Reports & Exports":
-            st.markdown("<h2 style='color:#111827;'>Data Export</h2>", unsafe_allow_html=True)
-            export_type = st.radio("Export:", ["Raw Material", "Dispatches", "Production"], horizontal=True)
-            dates = st.date_input("Date Range", [get_ist_now().date(), get_ist_now().date()])
-            if len(dates) == 2:
-                start_date, end_date = dates
-                if export_type == "Raw Material": filtered = [t for t in st.session_state["transactions"] if start_date <= datetime.datetime.strptime(t.get("Date", "01-01-2000").replace(".","-"), "%d-%m-%Y").date() <= end_date]
-                elif export_type == "Dispatches": filtered = [d for d in st.session_state["dispatches"] if start_date <= datetime.datetime.strptime(d.get("Date", "01-01-2000").replace(".","-"), "%d-%m-%Y").date() <= end_date]
-                else: filtered = [p for p in st.session_state["production"] if start_date <= datetime.datetime.strptime(p.get("Date", "01-01-2000").replace(".","-"), "%d-%m-%Y").date() <= end_date]
-                if not filtered: st.info(f"No records found.")
-                else:
-                    st.dataframe(pd.DataFrame(filtered), use_container_width=True)
-                    csv = pd.DataFrame(filtered).to_csv(index=False).encode('utf-8')
-                    st.download_button(label=f"📥 Download Excel", data=csv, file_name=f"KJL_Export.csv", mime="text/csv", type="primary")
+                            st.success("✅ Adjustment applied!"); time.sleep(1); st.rerun()
 
         elif admin_nav == "👥 User Management":
             st.markdown("<h2 style='color:#111827;'>User Management Console</h2>", unsafe_allow_html=True)
@@ -536,7 +429,7 @@ def dashboard():
                     if insert_table("materials", {"Name": new_material.upper(), "Cost": new_mat_cost}):
                         st.session_state["materials"].append(new_material.upper())
                         st.session_state["material_costs"][new_material.upper()] = new_mat_cost
-                        st.success("✅ Saved to cloud!"); time.sleep(1); st.rerun()
+                        st.success("✅ Saved!"); time.sleep(1); st.rerun()
             with tab2:
                 col1, col2 = st.columns(2)
                 with col1:
@@ -563,7 +456,6 @@ def dashboard():
                             val = st.number_input(f"kg", min_value=0.0, max_value=1000.0, step=10.0, key=f"kg_{ing}_{reset_key}", label_visibility="collapsed")
                             quantities[ing] = val; total_kg += val
                     if total_kg == 1000.0:
-                        st.success("Total: 1,000 kg")
                         if st.button("✔️ Save Feed Formula", type="primary"):
                             recipe = {k: v / 1000.0 for k, v in quantities.items()}
                             if insert_table("bom", {"Formula_Name": new_formula_name, "Recipe": recipe}):
@@ -578,34 +470,37 @@ def dashboard():
         tab_action, tab_history = st.tabs(["📝 Register Vehicle Arrival", "📅 Daily Registration Log"])
         
         with tab_action:
+            direction = st.radio("Vehicle Purpose", ["📥 Inbound (Raw Material Delivery)", "📤 Outbound (Feed Dispatch)"], horizontal=True)
+            
             with st.form("vehicle_entry_form", clear_on_submit=True):
-                vehicle_no = st.text_input("Vehicle Number")
-                material = st.selectbox("Material / Product", st.session_state["materials"])
-                vendor = st.selectbox("Vendor Name", st.session_state["vendors"])
-                if st.form_submit_button("Submit & Send to Lab", type="primary") and vehicle_no:
+                vehicle_no = st.text_input("Vehicle Number *")
+                if "Inbound" in direction:
+                    material = st.selectbox("Material Delivering", st.session_state["materials"])
+                    vendor = st.selectbox("Vendor Name", st.session_state["vendors"])
+                else:
+                    st.info("Outbound empty trucks go directly to Weighbridge for Tare Weight. Bypassing QC.")
+                    
+                if st.form_submit_button("Register Vehicle Arrival", type="primary") and vehicle_no:
                     next_gp_num = get_next_id(st.session_state["transactions"], "Gate_Pass_ID")
                     now_ist = get_ist_now()
-                    new_data = {
-                        "Gate_Pass_ID": f"GP-{next_gp_num}", 
-                        "Date": now_ist.strftime("%d-%m-%Y"), 
-                        "Time": now_ist.strftime("%I:%M %p"), 
-                        "Vehicle_No": vehicle_no.upper(), "Material": material, "Vendor": vendor, "Status": "Pending QC"
-                    }
+                    
+                    if "Inbound" in direction:
+                        new_data = {"Gate_Pass_ID": f"GP-{next_gp_num}", "Date": now_ist.strftime("%d-%m-%Y"), "Time": now_ist.strftime("%I:%M %p"), "Vehicle_No": vehicle_no.upper(), "Transaction_Type": "Inbound", "Material": material, "Vendor": vendor, "Status": "Pending QC"}
+                    else:
+                        new_data = {"Gate_Pass_ID": f"GP-{next_gp_num}", "Date": now_ist.strftime("%d-%m-%Y"), "Time": now_ist.strftime("%I:%M %p"), "Vehicle_No": vehicle_no.upper(), "Transaction_Type": "Outbound", "Status": "Pending Tare"}
+                        
                     if insert_table("transactions", new_data):
                         st.session_state["transactions"].append(new_data)
                         st.success("✅ Registered Successfully! View it in the cloud.")
-                        time.sleep(1)
-                        st.rerun()
-                    else:
-                        st.error("❌ Failed to register. See database error above.")
+                        time.sleep(1); st.rerun()
                     
         with tab_history:
             filter_date = st.date_input("Select Date", get_ist_now().date(), key="sec_date").strftime("%d-%m-%Y")
             filtered_tx = [t for t in st.session_state["transactions"] if t.get("Date") == filter_date]
             if not filtered_tx: st.info(f"No vehicles registered on {filter_date}.")
             else:
-                rows = "".join([f"<tr><td>{t.get('Time','')}</td><td style='font-weight:600;'>{t.get('Gate_Pass_ID','')}</td><td>{t.get('Vehicle_No','')}</td><td>{t.get('Material','')}</td><td>{t.get('Vendor','')}</td><td>{format_status(t.get('Status',''))}</td></tr>" for t in reversed(filtered_tx)])
-                render_table(["Time", "Gate Pass", "Vehicle No", "Material", "Vendor", "Status"], rows)
+                rows = "".join([f"<tr><td>{t.get('Time','')}</td><td style='font-weight:600;'>{t.get('Gate_Pass_ID','')}</td><td>{t.get('Transaction_Type','')}</td><td>{t.get('Vehicle_No','')}</td><td>{format_status(t.get('Status',''))}</td></tr>" for t in reversed(filtered_tx)])
+                render_table(["Time", "Gate Pass", "Type", "Vehicle No", "Status"], rows)
 
 # --- QC LAB ---
     elif role == "QC_Lab":
@@ -613,9 +508,9 @@ def dashboard():
         tab_action, tab_history = st.tabs(["🧪 Pending QC Tests", "📅 QC Test History"])
         
         with tab_action:
-            pending_qc = [t for t in st.session_state["transactions"] if t.get("Status") == "Pending QC"]
+            pending_qc = [t for t in st.session_state["transactions"] if t.get("Status") == "Pending QC" and t.get("Transaction_Type") == "Inbound"]
             if pending_qc:
-                selected_gp = st.selectbox("Select Vehicle", [f"{t.get('Gate_Pass_ID', 'N/A')} - {t.get('Vehicle_No','')}" for t in pending_qc]).split(" - ")[0]
+                selected_gp = st.selectbox("Select Inbound Vehicle", [format_vehicle_label(t) for t in pending_qc]).split(" - ")[0]
                 with st.form("qc_form", clear_on_submit=True):
                     qc_decision = st.radio("QC Decision", ["QC Passed", "QC Passed with Rebate", "QC Rejected"])
                     remarks = st.text_area("Remarks / Rebate Details")
@@ -625,14 +520,12 @@ def dashboard():
                                 qc_time_str = get_ist_now().strftime("%I:%M %p")
                                 if update_table("transactions", "Gate_Pass_ID", t["Gate_Pass_ID"], {"Status": qc_decision, "QC_Remarks": remarks.strip(), "QC_Time": qc_time_str}):
                                     t["Status"] = qc_decision; t["QC_Remarks"] = remarks.strip(); t["QC_Time"] = qc_time_str
-                                    st.success("✅ QC Results Submitted")
-                                    time.sleep(1)
-                                    st.rerun() 
+                                    st.success("✅ QC Results Submitted"); time.sleep(1); st.rerun() 
             else: st.info("No vehicles pending QC.")
             
         with tab_history:
             filter_date = st.date_input("Select Date", get_ist_now().date(), key="qc_date").strftime("%d-%m-%Y")
-            filtered_tx = [t for t in st.session_state["transactions"] if t.get("Date") == filter_date and t.get("Status") != "Pending QC"]
+            filtered_tx = [t for t in st.session_state["transactions"] if t.get("Date") == filter_date and t.get("Status") != "Pending QC" and t.get("Transaction_Type") == "Inbound"]
             if not filtered_tx: st.info(f"No QC tests completed on {filter_date}.")
             else:
                 rows = "".join([f"<tr><td style='font-weight:600;'>{t.get('Gate_Pass_ID','')}</td><td>{t.get('Vehicle_No','')}</td><td>{t.get('Material','')}</td><td>{format_status(t.get('Status',''))}</td><td>{t.get('QC_Remarks','')}</td></tr>" for t in reversed(filtered_tx)])
@@ -640,49 +533,74 @@ def dashboard():
 
 # --- WEIGHBRIDGE ---
     elif role == "Weighbridge":
-        st.markdown("<h2 style='color:#111827;'>Weighbridge Operations</h2>", unsafe_allow_html=True)
-        tab_action, tab_history = st.tabs(["⚖️ Active Weighments", "📅 Daily Weighbridge Log"])
+        st.markdown("<h2 style='color:#111827;'>Unified Weighbridge Operations</h2>", unsafe_allow_html=True)
+        tab_gross, tab_tare, tab_history = st.tabs(["🔴 Weigh In (Gross Weight)", "🔵 Weigh Out (Tare Weight)", "📅 Log"])
         
-        with tab_action:
-            pending_gross = [t for t in st.session_state["transactions"] if t.get("Status") in ["QC Passed", "QC Passed with Rebate"]]
+        with tab_gross:
+            st.info("Log **GROSS (Loaded)** weight here. Inbound trucks do this FIRST. Outbound trucks do this LAST.")
+            pending_gross = [t for t in st.session_state["transactions"] if (t.get("Transaction_Type", "Inbound") == "Inbound" and t.get("Status") in ["QC Passed", "QC Passed with Rebate"]) or (t.get("Transaction_Type") == "Outbound" and t.get("Status") == "Pending Gross")]
             if pending_gross:
-                gp_gross = st.selectbox("Select Loaded Vehicle", [f"{t.get('Gate_Pass_ID', 'N/A')} - {t.get('Vehicle_No','')}" for t in pending_gross]).split(" - ")[0]
+                gp_gross = st.selectbox("Select Loaded Vehicle", [format_vehicle_label(t) for t in pending_gross], key="sgross").split(" - ")[0]
+                t_gross = next(t for t in pending_gross if t.get("Gate_Pass_ID") == gp_gross)
+                
                 with st.form("gross_form", clear_on_submit=True):
+                    if t_gross.get("Transaction_Type") == "Outbound":
+                        st.markdown(f"**Empty Tare Weight was:** {t_gross.get('Tare_Weight',0)} kg")
                     gross_wt = st.number_input("Gross Weight (kg)", min_value=0.0, step=10.0)
+                    
                     if st.form_submit_button("Save Gross Weight", type="primary") and gross_wt > 0:
-                        for t in st.session_state["transactions"]:
-                            if t.get("Gate_Pass_ID") == gp_gross:
-                                gross_time_str = get_ist_now().strftime("%I:%M %p")
-                                if update_table("transactions", "Gate_Pass_ID", t["Gate_Pass_ID"], {"Gross_Weight": gross_wt, "Status": "Unloading", "Gross_Time": gross_time_str}):
-                                    t["Gross_Weight"] = gross_wt; t["Status"] = "Unloading"; t["Gross_Time"] = gross_time_str
-                                    st.success("✅ Gross Weight Saved")
-                                    time.sleep(1)
-                                    st.rerun()
+                        gross_time_str = get_ist_now().strftime("%I:%M %p")
+                        update_payload = {"Gross_Weight": gross_wt, "Gross_Time": gross_time_str}
+                        
+                        if t_gross.get("Transaction_Type", "Inbound") == "Inbound":
+                            update_payload["Status"] = "Unloading"
+                        else: # Outbound completing
+                            update_payload["Status"] = "Completed"
+                            if "Tare_Weight" in t_gross and t_gross["Tare_Weight"] > 0:
+                                update_payload["Net_Weight"] = gross_wt - t_gross["Tare_Weight"]
+                                
+                        if update_table("transactions", "Gate_Pass_ID", gp_gross, update_payload):
+                            t_gross.update(update_payload)
+                            st.success("✅ Gross Weight Saved!"); time.sleep(1); st.rerun()
+            else: st.info("No loaded vehicles waiting.")
 
-            st.divider()
-            pending_tare = [t for t in st.session_state["transactions"] if t.get("Status") == "Unloading"]
+        with tab_tare:
+            st.info("Log **TARE (Empty)** weight here. Inbound trucks do this LAST. Outbound trucks do this FIRST.")
+            pending_tare = [t for t in st.session_state["transactions"] if (t.get("Transaction_Type", "Inbound") == "Inbound" and t.get("Status") == "Unloading") or (t.get("Transaction_Type") == "Outbound" and t.get("Status") == "Pending Tare")]
+            
             if pending_tare:
-                gp_tare = st.selectbox("Select Empty Vehicle", [f"{t.get('Gate_Pass_ID', 'N/A')} - {t.get('Vehicle_No','')}" for t in pending_tare]).split(" - ")[0]
+                gp_tare = st.selectbox("Select Empty Vehicle", [format_vehicle_label(t) for t in pending_tare], key="stare").split(" - ")[0]
+                t_tare = next(t for t in pending_tare if t.get("Gate_Pass_ID") == gp_tare)
+                
                 with st.form("tare_form", clear_on_submit=True):
+                    if t_tare.get("Transaction_Type", "Inbound") == "Inbound":
+                        st.markdown(f"**Loaded Gross Weight was:** {t_tare.get('Gross_Weight',0)} kg")
                     tare_wt = st.number_input("Tare Weight (kg)", min_value=0.0, step=10.0)
-                    if st.form_submit_button("Save Tare & Complete", type="primary"):
-                        for t in st.session_state["transactions"]:
-                            if t.get("Gate_Pass_ID") == gp_tare and tare_wt < t.get("Gross_Weight", 0):
-                                net = t["Gross_Weight"] - tare_wt
-                                tare_time_str = get_ist_now().strftime("%I:%M %p")
-                                if update_table("transactions", "Gate_Pass_ID", t["Gate_Pass_ID"], {"Tare_Weight": tare_wt, "Net_Weight": net, "Status": "Completed", "Tare_Time": tare_time_str}):
-                                    t["Tare_Weight"] = tare_wt; t["Net_Weight"] = net; t["Status"] = "Completed"; t["Tare_Time"] = tare_time_str
-                                    st.success("✅ Vehicle Completed")
-                                    time.sleep(1)
-                                    st.rerun()
+                    
+                    if st.form_submit_button("Save Tare Weight", type="primary") and tare_wt > 0:
+                        tare_time_str = get_ist_now().strftime("%I:%M %p")
+                        update_payload = {"Tare_Weight": tare_wt, "Tare_Time": tare_time_str}
+                        
+                        if t_tare.get("Transaction_Type", "Inbound") == "Inbound":
+                            if tare_wt < t_tare.get("Gross_Weight", 0):
+                                update_payload["Status"] = "Completed"
+                                update_payload["Net_Weight"] = t_tare["Gross_Weight"] - tare_wt
+                            else: st.error("Tare cannot be greater than Gross!")
+                        else: # Outbound starting
+                            update_payload["Status"] = "Loading"
+                            
+                        if update_table("transactions", "Gate_Pass_ID", gp_tare, update_payload):
+                            t_tare.update(update_payload)
+                            st.success("✅ Tare Weight Saved!"); time.sleep(1); st.rerun()
+            else: st.info("No empty vehicles waiting.")
                                     
         with tab_history:
             filter_date = st.date_input("Select Date", get_ist_now().date(), key="wb_date").strftime("%d-%m-%Y")
             filtered_tx = [t for t in st.session_state["transactions"] if t.get("Date") == filter_date and (t.get("Gross_Weight", 0) > 0 or t.get("Tare_Weight", 0) > 0)]
-            if not filtered_tx: st.info(f"No weighments completed on {filter_date}.")
+            if not filtered_tx: st.info(f"No weighments on {filter_date}.")
             else:
-                rows = "".join([f"<tr><td style='font-weight:600;'>{t.get('Gate_Pass_ID','')}</td><td>{t.get('Vehicle_No','')}</td><td>{t.get('Material','')}</td><td>{t.get('Gross_Weight',0)}</td><td>{t.get('Tare_Weight',0)}</td><td style='font-weight:600;'>{t.get('Net_Weight',0)}</td><td>{format_status(t.get('Status',''))}</td></tr>" for t in reversed(filtered_tx)])
-                render_table(["Gate Pass", "Vehicle No", "Material", "Gross (kg)", "Tare (kg)", "Net (kg)", "Status"], rows)
+                rows = "".join([f"<tr><td style='font-weight:600;'>{t.get('Gate_Pass_ID','')}</td><td>{t.get('Transaction_Type','')}</td><td>{t.get('Vehicle_No','')}</td><td>{t.get('Gross_Weight',0)}</td><td>{t.get('Tare_Weight',0)}</td><td style='font-weight:600;'>{t.get('Net_Weight',0)}</td><td>{format_status(t.get('Status',''))}</td></tr>" for t in reversed(filtered_tx)])
+                render_table(["Pass", "Type", "Vehicle", "Gross(kg)", "Tare(kg)", "Net(kg)", "Status"], rows)
 
 # --- APP EXECUTION ---
 if "logged_in" not in st.session_state: st.session_state["logged_in"] = False

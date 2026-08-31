@@ -143,6 +143,15 @@ def format_vehicle_label(t):
     else:
         return f"{t.get('Gate_Pass_ID')} - {t.get('Vehicle_No')} ({t.get('Material', 'FEED')} for {t.get('Vendor', 'KJL')})"
 
+def get_photo_links_html(photo_url_string):
+    if not photo_url_string: return "-"
+    urls = photo_url_string.split(",")
+    if len(urls) == 1:
+        return f"<a href='{urls[0]}' target='_blank'>📷 View</a>"
+    else:
+        links = [f"<a href='{u}' target='_blank'>[{i+1}]</a>" for i, u in enumerate(urls)]
+        return f"📷 {' '.join(links)}"
+
 def calculate_inventory():
     inventory = {mat: 50000.0 for mat in st.session_state["materials"]} 
     finished_goods = {feed: 0.0 for feed in st.session_state["feed_names"]}
@@ -368,30 +377,38 @@ def dashboard():
                     with c2: dest = st.selectbox("Destination", st.session_state["locations"])
                     with c3: bags = st.number_input("Total Bags Loaded", min_value=1, step=1)
                     
-                    st.markdown("**Photographic Proof (Required)**")
-                    cam_photo = st.camera_input("Take Photo of Fully Loaded Truck 📸")
+                    st.markdown("**Photographic Proof (Up to 10 images allowed)**")
+                    uploaded_photos = st.file_uploader("Capture or upload photos of the loaded truck lines 📸", type=['jpg', 'jpeg', 'png'], accept_multiple_files=True)
                     
                     if st.form_submit_button("Complete Loading & Send to Final Weighbridge", type="primary"):
-                        if not cam_photo:
-                            st.error("⚠️ You must capture a photo of the loaded truck to proceed!")
+                        if not uploaded_photos:
+                            st.error("⚠️ You must upload at least one photo of the loaded truck to proceed!")
+                        elif len(uploaded_photos) > 10:
+                            st.error("⚠️ You can only upload a maximum of 10 photos per dispatch.")
                         else:
-                            with st.spinner("Uploading proof securely to the cloud..."):
-                                photo_name = f"{load_gp}_{int(time.time())}.jpg"
-                                photo_url = upload_file_to_supabase(cam_photo.getvalue(), photo_name)
-                                if photo_url:
-                                    update_payload = {"Feed_Name": feed_type, "Destination": dest, "Bags": bags, "Photo_URL": photo_url, "Status": "Pending Gross"}
+                            with st.spinner(f"Securely uploading {len(uploaded_photos)} photo(s) to the cloud..."):
+                                photo_urls = []
+                                for i, photo_file in enumerate(uploaded_photos):
+                                    photo_name = f"{load_gp}_{int(time.time())}_{i}.jpg"
+                                    p_url = upload_file_to_supabase(photo_file.getvalue(), photo_name)
+                                    if p_url:
+                                        photo_urls.append(p_url)
+                                
+                                if photo_urls:
+                                    joined_urls = ",".join(photo_urls)
+                                    update_payload = {"Feed_Name": feed_type, "Destination": dest, "Bags": bags, "Photo_URL": joined_urls, "Status": "Pending Gross"}
                                     if update_table("transactions", "Gate_Pass_ID", load_gp, update_payload):
                                         t_load.update(update_payload)
-                                        st.success("✅ Truck loaded, photo securely saved, sent to Weighbridge!")
+                                        st.success("✅ Truck loaded, photos securely saved, sent to Weighbridge!")
                                         time.sleep(1.5); st.rerun()
                                 else:
-                                    st.error("❌ Failed to upload photo to Supabase. Check bucket settings.")
+                                    st.error("❌ Failed to upload photos to Supabase. Check bucket settings.")
 
         elif admin_nav == "📜 Transaction Records":
             st.markdown("<h2 style='color:#111827;'>Unified Transaction Records</h2>", unsafe_allow_html=True)
             if not st.session_state["transactions"]: st.info("No records.")
             else:
-                rows = "".join([f"<tr><td>{t.get('Date','')}</td><td style='font-weight:600;'>{t.get('Gate_Pass_ID','')}</td><td>{t.get('Transaction_Type','')}</td><td>{t.get('Vehicle_No','')}</td><td>{t.get('Material', t.get('Feed_Name','-'))}</td><td>{format_status(t.get('Status',''))}</td><td style='font-weight:600;'>{t.get('Net_Weight', 0):,.0f} kg</td><td style='text-align:center;'>{get_print_link(t, 'OUTBOUND' if t.get('Transaction_Type')=='Outbound' else 'INWARD')}</td><td><a href='{t.get('Photo_URL', '#')}' target='_blank'>{'📷 View' if t.get('Photo_URL') else '-'}</a></td></tr>" for t in reversed(st.session_state["transactions"])])
+                rows = "".join([f"<tr><td>{t.get('Date','')}</td><td style='font-weight:600;'>{t.get('Gate_Pass_ID','')}</td><td>{t.get('Transaction_Type','')}</td><td>{t.get('Vehicle_No','')}</td><td>{t.get('Material', t.get('Feed_Name','-'))}</td><td>{format_status(t.get('Status',''))}</td><td style='font-weight:600;'>{t.get('Net_Weight', 0):,.0f} kg</td><td style='text-align:center;'>{get_print_link(t, 'OUTBOUND' if t.get('Transaction_Type')=='Outbound' else 'INWARD')}</td><td>{get_photo_links_html(t.get('Photo_URL', ''))}</td></tr>" for t in reversed(st.session_state["transactions"])])
                 render_table(["Date", "Pass ID", "Type", "Vehicle", "Product", "Status", "Net Wt", "Print", "Proof"], rows)
 
         elif admin_nav == "📦 Warehouse & Stock":
@@ -501,24 +518,32 @@ def dashboard():
                 with c2: dest = st.selectbox("Destination", st.session_state["locations"])
                 with c3: bags = st.number_input("Total Bags Loaded", min_value=1, step=1)
                 
-                st.markdown("**Photographic Proof (Required)**")
-                cam_photo = st.camera_input("Take Photo of Fully Loaded Truck 📸")
+                st.markdown("**Photographic Proof (Up to 10 images allowed)**")
+                uploaded_photos = st.file_uploader("Capture or upload photos of the loaded truck lines 📸", type=['jpg', 'jpeg', 'png'], accept_multiple_files=True)
                 
                 if st.form_submit_button("Complete Loading & Send to Final Weighbridge", type="primary"):
-                    if not cam_photo:
-                        st.error("⚠️ You must capture a photo of the loaded truck to proceed!")
+                    if not uploaded_photos:
+                        st.error("⚠️ You must upload at least one photo of the loaded truck to proceed!")
+                    elif len(uploaded_photos) > 10:
+                        st.error("⚠️ You can only upload a maximum of 10 photos per dispatch.")
                     else:
-                        with st.spinner("Uploading proof securely to the cloud..."):
-                            photo_name = f"{load_gp}_{int(time.time())}.jpg"
-                            photo_url = upload_file_to_supabase(cam_photo.getvalue(), photo_name)
-                            if photo_url:
-                                update_payload = {"Feed_Name": feed_type, "Destination": dest, "Bags": bags, "Photo_URL": photo_url, "Status": "Pending Gross"}
+                        with st.spinner(f"Securely uploading {len(uploaded_photos)} photo(s) to the cloud..."):
+                            photo_urls = []
+                            for i, photo_file in enumerate(uploaded_photos):
+                                photo_name = f"{load_gp}_{int(time.time())}_{i}.jpg"
+                                p_url = upload_file_to_supabase(photo_file.getvalue(), photo_name)
+                                if p_url:
+                                    photo_urls.append(p_url)
+                            
+                            if photo_urls:
+                                joined_urls = ",".join(photo_urls)
+                                update_payload = {"Feed_Name": feed_type, "Destination": dest, "Bags": bags, "Photo_URL": joined_urls, "Status": "Pending Gross"}
                                 if update_table("transactions", "Gate_Pass_ID", load_gp, update_payload):
                                     t_load.update(update_payload)
-                                    st.success("✅ Truck loaded, photo securely saved, sent to Weighbridge!")
+                                    st.success("✅ Truck loaded, photos securely saved, sent to Weighbridge!")
                                     time.sleep(1.5); st.rerun()
                             else:
-                                st.error("❌ Failed to upload photo to Supabase. Check bucket settings.")
+                                st.error("❌ Failed to upload photos to Supabase. Check bucket settings.")
 
 # --- GATE SECURITY ---
     elif role == "Security":

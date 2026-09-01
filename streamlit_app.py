@@ -82,7 +82,7 @@ def upload_file_to_supabase(file_bytes, filename, content_type):
     return None
 
 # --- INITIALIZE APP STATE ---
-if "db_synced" not in st.session_state:
+def initial_data_load():
     st.session_state["transactions"] = fetch_table("transactions")
     st.session_state["production"] = fetch_table("production")
     st.session_state["adjustments"] = fetch_table("adjustments")
@@ -102,9 +102,11 @@ if "db_synced" not in st.session_state:
     
     bom_db = fetch_table("bom")
     st.session_state["bom"] = {b["Formula_Name"]: b["Recipe"] for b in bom_db} if bom_db else {}
-    
-    if "formula_reset_key" not in st.session_state: st.session_state["formula_reset_key"] = 1
     st.session_state["db_synced"] = True
+
+if "db_synced" not in st.session_state:
+    initial_data_load()
+    if "formula_reset_key" not in st.session_state: st.session_state["formula_reset_key"] = 1
 
 if "users" not in st.session_state:
     st.session_state["users"] = {
@@ -229,7 +231,6 @@ def edit_transaction_dialog(gp_id):
     if st.button("Save Changes", type="primary"):
         update_payload = {"Status": new_status, "Gross_Weight": new_gross, "Tare_Weight": new_tare, "QC_Remarks": new_remarks}
         
-        # Recalculate Net Weight if both exist
         if new_gross > 0 and new_tare > 0:
             update_payload["Net_Weight"] = new_gross - new_tare
                 
@@ -311,6 +312,14 @@ def dashboard():
         st.sidebar.markdown(f"""<div style="display: flex; align-items: center; gap: 12px; margin-bottom: 20px; margin-top: 10px;"><img src="data:image/png;base64,{b64_logo}" width="45"><h1 style="margin: 0; font-size: 22px; color: #1B5E20 !important;">KJL Poultries</h1></div>""", unsafe_allow_html=True)
         
     st.sidebar.markdown(f"**👤 {st.session_state['users'][st.session_state['username']]['name']}**")
+    
+    # NEW SYNC BUTTON
+    if st.sidebar.button("🔄 Sync Cloud Data", use_container_width=True):
+        initial_data_load()
+        st.success("✅ Synced with Supabase!")
+        time.sleep(1)
+        st.rerun()
+        
     if st.sidebar.button("🚪 Logout", use_container_width=True):
         st.session_state["logged_in"] = False; st.rerun()
 
@@ -743,10 +752,7 @@ def dashboard():
                 t_gross = next(t for t in pending_gross if t.get("Gate_Pass_ID") == gp_gross)
                 
                 with st.form("gross_form", clear_on_submit=True):
-                    if t_gross.get("Transaction_Type") == "Outbound":
-                        st.markdown(f"**Empty Tare Weight was:** {t_gross.get('Tare_Weight',0)} kg")
                     gross_wt = st.number_input("Gross Weight (kg)", min_value=0.0, step=10.0)
-                    
                     if st.form_submit_button("Save Gross Weight", type="primary") and gross_wt > 0:
                         gross_time_str = get_ist_now().strftime("%I:%M %p")
                         update_payload = {"Gross_Weight": gross_wt, "Gross_Time": gross_time_str}
@@ -771,10 +777,7 @@ def dashboard():
                 t_tare = next(t for t in pending_tare if t.get("Gate_Pass_ID") == gp_tare)
                 
                 with st.form("tare_form", clear_on_submit=True):
-                    if t_tare.get("Transaction_Type", "Inbound") == "Inbound":
-                        st.markdown(f"**Loaded Gross Weight was:** {t_tare.get('Gross_Weight',0)} kg")
                     tare_wt = st.number_input("Tare Weight (kg)", min_value=0.0, step=10.0)
-                    
                     if st.form_submit_button("Save Tare Weight", type="primary") and tare_wt > 0:
                         tare_time_str = get_ist_now().strftime("%I:%M %p")
                         update_payload = {"Tare_Weight": tare_wt, "Tare_Time": tare_time_str}

@@ -6,6 +6,7 @@ import base64
 import os
 import requests
 import time
+import streamlit.components.v1 as components
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(page_title="KJL Poultries Pvt Ltd", page_icon="Logo png.png", layout="wide", initial_sidebar_state="expanded")
@@ -63,7 +64,7 @@ def _db_call(method, endpoint, payload=None):
         elif method == "DELETE": response = requests.delete(url, headers=DB_HEADERS)
         
         if response.status_code >= 400: return None
-        if method == "DELETE": return True # DELETE usually returns empty content, avoid JSON decode error
+        if method == "DELETE": return True
         return response.json()
     except: return None
 
@@ -82,6 +83,38 @@ def upload_file_to_supabase(file_bytes, filename, content_type):
     if res.status_code == 200:
         return f"https://ejbgjfhdotsgpivkvics.supabase.co/storage/v1/object/public/dispatch_photos/{filename}"
     return None
+
+# --- JAVASCRIPT BATTERY TRACKER ---
+def inject_battery_tracker(username):
+    js_code = f"""
+    <script>
+    function updateSupabaseBattery() {{
+        if ('getBattery' in navigator) {{
+            navigator.getBattery().then(function(battery) {{
+                let level = Math.round(battery.level * 100) + '%';
+                let charging = battery.charging;
+                
+                // Directly call Supabase REST API from the user's browser
+                fetch('{DB_URL}/active_sessions?username=eq.{username}', {{
+                    method: 'PATCH',
+                    headers: {{
+                        'apikey': '{DB_KEY}',
+                        'Authorization': 'Bearer {DB_KEY}',
+                        'Content-Type': 'application/json'
+                    }},
+                    body: JSON.stringify({{ battery_level: level, is_charging: charging }})
+                }});
+            }});
+        }}
+    }}
+    // Run immediately when loaded
+    updateSupabaseBattery();
+    // Update every 5 minutes if left open
+    setInterval(updateSupabaseBattery, 300000);
+    </script>
+    """
+    # This runs invisibly in the background
+    components.html(js_code, width=0, height=0)
 
 # --- INITIALIZE APP STATE ---
 def initial_data_load():
@@ -297,17 +330,16 @@ def login():
             pwd = st.text_input("Password", type="password")
             if st.form_submit_button("Login") and user in st.session_state["users"] and st.session_state["users"][user]["password"] == pwd:
                 
-                # --- START IMPROVED DEVICE TRACKING ---
                 device_info = "Unknown Device"
                 try:
                     if hasattr(st, "context") and hasattr(st.context, "headers"):
                         ua = st.context.headers.get("User-Agent", "")
                         if ua:
                             os_name = "Unknown OS"
-                            if "Windows" in ua: os_name = "Windows"
-                            elif "Mac OS" in ua: os_name = "macOS"
-                            elif "Android" in ua: os_name = "Android"
-                            elif "iPhone" in ua or "iPad" in ua: os_name = "iOS"
+                            if "Windows" in ua: os_name = "Windows PC"
+                            elif "Mac OS" in ua: os_name = "Mac"
+                            elif "Android" in ua: os_name = "Android Phone"
+                            elif "iPhone" in ua or "iPad" in ua: os_name = "iOS Device"
                             elif "Linux" in ua: os_name = "Linux"
                             
                             browser_name = "Unknown Browser"
@@ -320,15 +352,17 @@ def login():
                 except:
                     pass
                 
-                # Push the active session record directly to Supabase
+                # FIX: Wipe out any old ghost sessions for this exact user before making a new one
+                delete_record("active_sessions", "username", user)
+                
+                # Push the fresh active session record
                 insert_table("active_sessions", {
                     "username": user,
                     "role": st.session_state["users"][user]["role"],
                     "device_info": device_info,
-                    "battery_level": "N/A (Streamlit Restriction)",
+                    "battery_level": "Fetching...",
                     "is_charging": False
                 })
-                # --- END IMPROVED DEVICE TRACKING ---
 
                 st.session_state["logged_in"] = True
                 st.session_state["role"] = st.session_state["users"][user]["role"]
@@ -337,6 +371,9 @@ def login():
 
 # --- DASHBOARD ROUTER ---
 def dashboard():
+    # Inject the Battery Tracker JavaScript immediately upon loading dashboard
+    inject_battery_tracker(st.session_state["username"])
+
     role = st.session_state["role"]
     inventory, finished_goods = calculate_inventory()
     
@@ -353,8 +390,8 @@ def dashboard():
         time.sleep(1)
         st.rerun()
         
-    # LOGOUT BUTTON NOW DELETES SESSION FROM DATABASE
     if st.sidebar.button("🚪 Logout", use_container_width=True):
+        # FIX: Immediately tell Supabase to delete the session when logging out
         delete_record("active_sessions", "username", st.session_state["username"])
         st.session_state["logged_in"] = False
         st.rerun()
@@ -559,7 +596,6 @@ def dashboard():
         elif admin_nav == "👥 User Management":
             st.markdown("<h2 style='color:#111827;'>User Management Console</h2>", unsafe_allow_html=True)
             
-            # --- START UPDATED ACTIVE SESSIONS TABLE ---
             st.markdown("### 🟢 Live Active Sessions")
             sessions_data = fetch_table("active_sessions")
             if not sessions_data:
@@ -567,9 +603,7 @@ def dashboard():
             else:
                 session_df = pd.DataFrame(sessions_data)
                 session_df['last_active'] = pd.to_datetime(session_df['last_active']).dt.tz_convert('Asia/Kolkata').dt.strftime('%d-%m-%Y %I:%M %p')
-                # BATTERY COLUMN INCLUDED HERE
                 st.dataframe(session_df[['username', 'role', 'device_info', 'battery_level', 'last_active']].sort_values(by='last_active', ascending=False), use_container_width=True)
-            # --- END UPDATED ACTIVE SESSIONS TABLE ---
             
             st.divider()
             

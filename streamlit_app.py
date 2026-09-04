@@ -40,8 +40,6 @@ st.markdown("""
     .status-orange::before { content: ''; width: 8px; height: 8px; background-color: #F59E0B; border-radius: 50%; }
     .status-dark { color: #4B5563; font-weight: 600; display: inline-flex; align-items: center; gap: 8px; }
     .status-dark::before { content: ''; width: 8px; height: 8px; background-color: #4B5563; border-radius: 50%; }
-    
-    .blue-header { background-color: #1B5E20; color: white; text-align: center; font-weight: bold; padding: 8px; font-size: 14px; margin-top: 15px; margin-bottom: 10px; border-radius: 6px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -197,7 +195,7 @@ def format_status(status_text):
     else: return f"<span>{status_text}</span>"
 
 # =====================================================================
-# RESTORED DRILL-DOWN & EDIT POP-UP DIALOGS
+# POP-UP DIALOGS
 # =====================================================================
 @st.dialog("📸 Truck Photo Gallery", width="large")
 def view_photos_dialog(gp_id):
@@ -230,10 +228,8 @@ def edit_transaction_dialog(gp_id):
 
     if st.button("Save Changes", type="primary"):
         update_payload = {"Status": new_status, "Gross_Weight": new_gross, "Tare_Weight": new_tare, "QC_Remarks": new_remarks}
-        
         if new_gross > 0 and new_tare > 0:
             update_payload["Net_Weight"] = new_gross - new_tare
-                
         if update_table("transactions", "Gate_Pass_ID", gp_id, update_payload):
             t_edit.update(update_payload); st.rerun()
 
@@ -282,7 +278,7 @@ def view_active_vehicles_dialog(date_str):
         render_table(["Type", "Gate Pass", "Vehicle No", "Current Status"], rows)
 
 
-# --- LOGIN ---
+# --- LOGIN MODULE WITH SESSION TRACKING ---
 def login():
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
@@ -296,6 +292,30 @@ def login():
             user = st.text_input("Username")
             pwd = st.text_input("Password", type="password")
             if st.form_submit_button("Login") and user in st.session_state["users"] and st.session_state["users"][user]["password"] == pwd:
+                
+                # --- START DEVICE TRACKING ---
+                device_info = "Web Browser"
+                try:
+                    # Safely attempt to read browser headers to determine device
+                    if hasattr(st, "context") and hasattr(st.context, "headers"):
+                        ua = st.context.headers.get("User-Agent", "")
+                        if "Mobile" in ua or "Android" in ua or "iPhone" in ua:
+                            device_info = "Mobile Phone"
+                        elif ua:
+                            device_info = "Desktop PC"
+                except:
+                    pass
+                
+                # Push the active session record directly to Supabase
+                insert_table("active_sessions", {
+                    "username": user,
+                    "role": st.session_state["users"][user]["role"],
+                    "device_info": device_info,
+                    "battery_level": "N/A (Streamlit)",
+                    "is_charging": False
+                })
+                # --- END DEVICE TRACKING ---
+
                 st.session_state["logged_in"] = True
                 st.session_state["role"] = st.session_state["users"][user]["role"]
                 st.session_state["username"] = user
@@ -313,7 +333,6 @@ def dashboard():
         
     st.sidebar.markdown(f"**👤 {st.session_state['users'][st.session_state['username']]['name']}**")
     
-    # NEW SYNC BUTTON
     if st.sidebar.button("🔄 Sync Cloud Data", use_container_width=True):
         initial_data_load()
         st.success("✅ Synced with Supabase!")
@@ -523,7 +542,21 @@ def dashboard():
         elif admin_nav == "👥 User Management":
             st.markdown("<h2 style='color:#111827;'>User Management Console</h2>", unsafe_allow_html=True)
             
-            st.markdown("### Active Users")
+            # --- START ACTIVE SESSIONS TABLE ---
+            st.markdown("### 🟢 Live Active Sessions")
+            sessions_data = fetch_table("active_sessions")
+            if not sessions_data:
+                st.info("No active sessions recorded yet.")
+            else:
+                session_df = pd.DataFrame(sessions_data)
+                # Parse timestamp and sort by newest first
+                session_df['last_active'] = pd.to_datetime(session_df['last_active']).dt.tz_convert('Asia/Kolkata').dt.strftime('%d-%m-%Y %I:%M %p')
+                st.dataframe(session_df[['username', 'role', 'device_info', 'last_active']].sort_values(by='last_active', ascending=False), use_container_width=True)
+            # --- END ACTIVE SESSIONS TABLE ---
+            
+            st.divider()
+            
+            st.markdown("### System Users")
             user_data = []
             for uname, details in st.session_state["users"].items():
                 user_data.append({"Employee ID": details.get("emp_id", ""), "Username": uname, "Full Name": details.get("name", ""), "Assigned Role": details.get("role", "")})

@@ -60,7 +60,10 @@ def _db_call(method, endpoint, payload=None):
         if method == "GET": response = requests.get(url, headers=DB_HEADERS)
         elif method == "POST": response = requests.post(url, headers=DB_HEADERS, json=payload)
         elif method == "PATCH": response = requests.patch(url, headers=DB_HEADERS, json=payload)
+        elif method == "DELETE": response = requests.delete(url, headers=DB_HEADERS)
+        
         if response.status_code >= 400: return None
+        if method == "DELETE": return True # DELETE usually returns empty content, avoid JSON decode error
         return response.json()
     except: return None
 
@@ -70,6 +73,7 @@ def fetch_table(table_name):
 
 def insert_table(table_name, payload): return _db_call("POST", table_name, payload) is not None
 def update_table(table_name, pk_col, pk_val, payload): return _db_call("PATCH", f"{table_name}?{pk_col}=eq.{pk_val}", payload) is not None
+def delete_record(table_name, pk_col, pk_val): return _db_call("DELETE", f"{table_name}?{pk_col}=eq.{pk_val}") is not None
 
 def upload_file_to_supabase(file_bytes, filename, content_type):
     url = f"{STORAGE_URL}/{filename}"
@@ -293,16 +297,26 @@ def login():
             pwd = st.text_input("Password", type="password")
             if st.form_submit_button("Login") and user in st.session_state["users"] and st.session_state["users"][user]["password"] == pwd:
                 
-                # --- START DEVICE TRACKING ---
-                device_info = "Web Browser"
+                # --- START IMPROVED DEVICE TRACKING ---
+                device_info = "Unknown Device"
                 try:
-                    # Safely attempt to read browser headers to determine device
                     if hasattr(st, "context") and hasattr(st.context, "headers"):
                         ua = st.context.headers.get("User-Agent", "")
-                        if "Mobile" in ua or "Android" in ua or "iPhone" in ua:
-                            device_info = "Mobile Phone"
-                        elif ua:
-                            device_info = "Desktop PC"
+                        if ua:
+                            os_name = "Unknown OS"
+                            if "Windows" in ua: os_name = "Windows"
+                            elif "Mac OS" in ua: os_name = "macOS"
+                            elif "Android" in ua: os_name = "Android"
+                            elif "iPhone" in ua or "iPad" in ua: os_name = "iOS"
+                            elif "Linux" in ua: os_name = "Linux"
+                            
+                            browser_name = "Unknown Browser"
+                            if "Edg" in ua: browser_name = "Edge"
+                            elif "Chrome" in ua: browser_name = "Chrome"
+                            elif "Safari" in ua and "Chrome" not in ua: browser_name = "Safari"
+                            elif "Firefox" in ua: browser_name = "Firefox"
+                            
+                            device_info = f"{os_name} - {browser_name}"
                 except:
                     pass
                 
@@ -311,10 +325,10 @@ def login():
                     "username": user,
                     "role": st.session_state["users"][user]["role"],
                     "device_info": device_info,
-                    "battery_level": "N/A (Streamlit)",
+                    "battery_level": "N/A (Streamlit Restriction)",
                     "is_charging": False
                 })
-                # --- END DEVICE TRACKING ---
+                # --- END IMPROVED DEVICE TRACKING ---
 
                 st.session_state["logged_in"] = True
                 st.session_state["role"] = st.session_state["users"][user]["role"]
@@ -339,8 +353,11 @@ def dashboard():
         time.sleep(1)
         st.rerun()
         
+    # LOGOUT BUTTON NOW DELETES SESSION FROM DATABASE
     if st.sidebar.button("🚪 Logout", use_container_width=True):
-        st.session_state["logged_in"] = False; st.rerun()
+        delete_record("active_sessions", "username", st.session_state["username"])
+        st.session_state["logged_in"] = False
+        st.rerun()
 
     if role == "Admin":
         st.sidebar.markdown("<br><p style='color:#6B7280; font-size:12px; font-weight:bold; margin-bottom:5px; text-transform:uppercase;'>General Menu</p>", unsafe_allow_html=True)
@@ -542,17 +559,17 @@ def dashboard():
         elif admin_nav == "👥 User Management":
             st.markdown("<h2 style='color:#111827;'>User Management Console</h2>", unsafe_allow_html=True)
             
-            # --- START ACTIVE SESSIONS TABLE ---
+            # --- START UPDATED ACTIVE SESSIONS TABLE ---
             st.markdown("### 🟢 Live Active Sessions")
             sessions_data = fetch_table("active_sessions")
             if not sessions_data:
                 st.info("No active sessions recorded yet.")
             else:
                 session_df = pd.DataFrame(sessions_data)
-                # Parse timestamp and sort by newest first
                 session_df['last_active'] = pd.to_datetime(session_df['last_active']).dt.tz_convert('Asia/Kolkata').dt.strftime('%d-%m-%Y %I:%M %p')
-                st.dataframe(session_df[['username', 'role', 'device_info', 'last_active']].sort_values(by='last_active', ascending=False), use_container_width=True)
-            # --- END ACTIVE SESSIONS TABLE ---
+                # BATTERY COLUMN INCLUDED HERE
+                st.dataframe(session_df[['username', 'role', 'device_info', 'battery_level', 'last_active']].sort_values(by='last_active', ascending=False), use_container_width=True)
+            # --- END UPDATED ACTIVE SESSIONS TABLE ---
             
             st.divider()
             
